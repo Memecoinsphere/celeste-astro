@@ -74,6 +74,44 @@
   </section>
 
   <!-- Panneaux -->
+  <section id="panel-telescope" class="panel hidden">
+    <div class="panel-head"><h2>🔭 Télescope · GoTo et suivi</h2><button class="close" data-close="panel-telescope" aria-label="Fermer">×</button></div>
+    <div class="panel-body tel">
+      <div id="telStatus" class="tel-status"><b>Non connecté</b></div>
+      <button id="telStop" class="tel-stop" type="button" aria-label="Arrêt d'urgence de la monture">STOP</button>
+      <details id="telConn" open>
+        <summary>Connexion</summary>
+        <label class="field"><span>Télescope</span><select id="telMount" aria-label="Type de télescope / monture"></select></label>
+        <label class="field"><span>Liaison</span><select id="telLink" aria-label="Type de liaison"></select></label>
+        <div id="telLinkOpts"></div>
+        <div id="telCompat" class="fine"></div>
+        <div id="telMsg" class="tel-msg hidden"></div>
+        <div class="tel-row"><button id="telConnect" class="btn accent" type="button">Connecter</button><button id="telDisconnect" class="btn hidden" type="button">Déconnecter</button></div>
+      </details>
+      <div class="sect">Pointage</div>
+      <div id="telTarget" class="tel-target"></div>
+      <div class="tel-row tel-ctl"><button id="telGoto" class="btn accent tel-big" type="button">GoTo</button><button id="telSync" class="btn" type="button">Sync (objet centré)</button></div>
+      <div class="tel-row tel-ctl"><label class="tel-chk"><input type="checkbox" id="telTrack"> Suivi sidéral</label><button id="telParkBtn" class="btn small hidden" type="button">Parquer</button></div>
+      <div id="telPark" class="tel-warn hidden">⚠️ Monture parquée : GoTo et flèches bloqués. <button id="telUnpark" class="btn small" type="button">Dé-parquer</button></div>
+      <div class="sect">Déplacement manuel <span class="fine">(maintenir appuyé)</span></div>
+      <div class="tel-padrow tel-ctl">
+        <div class="tel-pad">
+          <span></span><button data-dir="n" type="button" aria-label="Nord / haut">▲<small>N</small></button><span></span>
+          <button data-dir="w" type="button" aria-label="Ouest">◀<small>O</small></button><span class="tel-dot">✛</span><button data-dir="e" type="button" aria-label="Est">▶<small>E</small></button>
+          <span></span><button data-dir="s" type="button" aria-label="Sud / bas">▼<small>S</small></button><span></span>
+        </div>
+        <label class="tel-rate"><span class="fine">Vitesse</span><select id="telRate" aria-label="Vitesse"><option value="0">Guidage</option><option value="1">Centrage</option><option value="2">Recherche</option><option value="3">Rapide</option></select><span class="fine">Le sens peut être inversé selon la monture.</span></label>
+      </div>
+      <details class="tel-safe"><summary>Sécurité</summary>
+        <label class="field"><span>Hauteur minimale (°)</span><input id="telMinAlt" type="number" min="-5" max="60" step="1" value="0"></label>
+        <label class="tel-chk"><input type="checkbox" id="telSolar"> Filtre solaire certifié installé (autorise le Soleil)</label>
+        <p class="fine">Refus des objets sous la hauteur minimale ; alerte si le Soleil est à moins de 20° ; STOP (ou touche Échap) arrête tout ; les flèches s'arrêtent dès qu'on relâche (20 s maximum).</p>
+      </details>
+      <details><summary>Journal des commandes</summary><pre id="telLog" class="tel-log"></pre></details>
+      <p class="fine">« Autoguidage » ici = GoTo + suivi sidéral de la monture + Sync. L'autoguidage par caméra de guidage (type PHD2) n'est pas pris en charge. Guide complet : README.</p>
+    </div>
+  </section>
+
   <section id="panel-tonight" class="panel hidden">
     <div class="panel-head"><h2>Ce soir</h2><button class="close" data-close="panel-tonight" aria-label="Fermer">×</button></div>
     <div id="tonightContent" class="panel-body"></div>
@@ -110,6 +148,7 @@
       <label><input type="checkbox" data-opt="messier"> Catalogue de Messier (M1–M110)</label>
       <div class="xo-legend mes-legend" aria-hidden="true"><span style="color:rgb(255,150,150)">⬬ galaxie</span><span style="color:rgb(255,226,120)">⁘ amas ouvert</span><span style="color:rgb(255,190,105)">⊕ amas globulaire</span><span style="color:rgb(110,215,235)">▢ nébuleuse</span><span style="color:rgb(120,240,170)">⊙ planétaire</span><span style="color:rgb(255,160,90)">✺ rémanent</span><span style="color:rgb(225,230,255)">‥ double · ⁙ astérisme</span></div>
       <button id="mesMarBtn" class="btn" type="button">Marathon Messier : visibles cette nuit</button>
+      <button id="telOpenBtn" class="btn" type="button">🔭 Télescope : GoTo, Sync, suivi</button>
       <div id="satSection" class="sat-section hidden">
         <div class="sect">Satellites <span class="adv-tag">mode avancé</span></div>
         <label><input type="checkbox" data-sat="iss"> ISS (station spatiale internationale)</label>
@@ -197,6 +236,7 @@
   </section>
   <div id="lockFlash"></div>
 
+  <button id="telFabStop" class="tel-fab-stop hidden" type="button" aria-label="Arrêt d'urgence du télescope">⛔ STOP télescope</button>
   <div id="toast" class="hidden"></div>
 </div>
 <div id="redFilter"></div>
@@ -206,5 +246,6 @@
 <script src="extreme.js"></script>
 <script src="messier.js"></script>
 <script src="app.js"></script>
+<script src="telescope.js"></script>
 </body>
 </html>

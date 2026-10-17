@@ -50,13 +50,57 @@ Détection automatique (`devicemotion` sans `rotationRate`, ou orientation très
 
 **Calibrer sur une étoile** : le bouton « Calibrer » propose 3 à 5 astres brillants au-dessus de l'horizon (Lune, planètes, étoiles brillantes) ou l'objet recherché. On centre le vrai astre dans le cercle jaune, on touche « Valider » : l'app calcule les décalages d'azimut et de hauteur et affiche l'erreur résiduelle. Une 2e étoile (à plus de 30° de la première) ajoute la correction d'inclinaison. Le calibrage est enregistré sur l'appareil (`localStorage`) et réinitialisable ; l'ancienne option « viser le Nord » reste disponible dans la même fenêtre.
 
+## Télescope : GoTo, Sync et suivi (Calques › « 🔭 Télescope »)
+
+Céleste peut piloter une monture motorisée : **GoTo** vers l'objet touché sur la carte, **Sync** (recaler la monture sur une étoile centrée), **suivi sidéral** marche/arrêt, **flèches** de déplacement (maintenir appuyé, 4 vitesses), **parcage**, et un gros bouton **STOP** (aussi la touche Échap, et un bouton flottant « STOP télescope » quand le panneau est fermé). La position du télescope s'affiche sur la carte (réticule vert). Pour l'objet visé, l'app envoie les coordonnées de la date (précession et nutation appliquées) ou J2000, selon le protocole ou le réglage.
+
+« Autoguidage » veut dire ici : GoTo, puis suivi sidéral de la monture, avec un Sync pour corriger. **L'autoguidage par caméra de guidage (type PHD2) n'est pas pris en charge.**
+
+### Qu'est-ce qui marche, et où ?
+| Télescope / monture | Protocole | Android (Chrome) | PC (Chrome/Edge) | iPhone (Safari) |
+|---|---|---|---|---|
+| Celestron NexStar, SE, SLT, CPC, AVX, CGX… (raquette NexStar+) | NexStar | câble USB-OTG (Chrome 148+) ou Bluetooth série (138+) | câble USB/série, ou passerelle | via la passerelle sur un PC |
+| Sky-Watcher avec raquette SynScan (câble) | NexStar (compatible) | idem | idem | via la passerelle |
+| Meade LX200, LX90, LX600, ETX (AutoStar/AudioStar) | LX200 | idem | idem | via la passerelle |
+| OnStep / OnStepX | LX200 | USB, Bluetooth série, Wi-Fi via passerelle | idem | Wi-Fi ou USB via la passerelle |
+| Autres compatibles LX200 (10Micron, Gemini, Avalon…) | LX200 | idem (non vérifié) | idem | via la passerelle |
+| Adaptateur Bluetooth BLE « série » (HM-10, Nordic UART) branché sur une raquette | NexStar ou LX200 | Web Bluetooth | Web Bluetooth | non (pas de Web Bluetooth) |
+| iOptron, Celestron CPWI, SynScan App, toute monture ASCOM | ASCOM Alpaca | via la passerelle (ou en direct si le serveur autorise CORS, Chrome 142+) | idem | via la passerelle |
+| KStars/Ekos, StellarMate, Astroberry | INDI (expérimental) | via la passerelle | via la passerelle | via la passerelle |
+| Celestron Wi-Fi (SkyPortal, Evolution, Origin) | AUX propriétaire | ✗ (passer par CPWI + ASCOM Remote → Alpaca) | ✗ | ✗ |
+| Sky-Watcher Wi-Fi (AZ-GTi, Star Adventurer GTi, adaptateur SynScan Wi-Fi) | UDP propriétaire | ✗ (passer par SynScan App + ASCOM Remote → Alpaca) | ✗ | ✗ |
+
+Pourquoi l'iPhone passe toujours par un PC : Safari ne propose ni Web Serial ni Web Bluetooth. En plus, une page HTTPS (GitHub Pages) n'a pas le droit d'appeler un appareil `http://192.168…` (contenu mixte). La passerelle sert donc l'application elle-même sur le réseau local, et tout vient de la même adresse.
+
+### La passerelle PC (`celeste_bridge.py`)
+Un seul fichier, Python 3.8 ou plus récent, sous Windows, macOS, Linux ou Raspberry Pi. `pyserial` n'est nécessaire que pour les ports série/USB.
+1. Installez Python, puis dans un terminal : `pip install pyserial`
+2. Lancez `python3 celeste_bridge.py` depuis le dossier de l'application (Windows : `py celeste_bridge.py`).
+3. Elle affiche une adresse, par exemple `http://192.168.1.20:8765/`. Sur l'iPhone, connecté au **même Wi-Fi**, ouvrez cette adresse dans Safari.
+4. Calques › 🔭 Télescope : choisissez le télescope, puis la liaison « Passerelle PC → port série » (ex. `COM3` ou `/dev/ttyUSB0`, avec « Tester la passerelle » pour voir la liste des ports), « → TCP » (OnStep Wi-Fi : IP de la monture, port 9999 ; indiserver : port 7624) ou « → serveur Alpaca » (bouton « Rechercher »).
+- Options : `--https` (certificat auto-signé à accepter une fois ; utile seulement pour le GPS ou la caméra sur iPhone via la passerelle), `--port 8765`, `--local-only`.
+- Sécurité : seules les pages Céleste peuvent l'utiliser (même adresse, localhost, memecoinsphere.github.io). Le relais Alpaca est limité aux adresses du réseau local. Coupez-la (Ctrl+C) après la séance.
+- Chrome sur Android ou PC peut aussi garder le site GitHub et viser la passerelle `http://IP-du-PC:8765`. Chrome 142+ demande alors l'autorisation « appareils du réseau local » : acceptez-la.
+
+### Mode d'emploi rapide
+1. Faites l'alignement habituel sur la raquette (ou dans le logiciel de la monture) et vérifiez l'heure et le lieu dans Céleste.
+2. Calques › « 🔭 Télescope : GoTo, Sync, suivi » › choisissez le télescope et la liaison › **Connecter** (Web Serial ou Bluetooth : choisissez l'appareil dans la fenêtre du navigateur).
+3. Touchez une étoile, une planète ou un objet Messier sur la carte : la fiche affiche **« 🔭 GoTo télescope »**. Sinon, utilisez le bouton GoTo du panneau.
+4. À l'arrivée, si l'objet n'est pas centré : centrez-le avec les flèches, puis **Sync**. Les GoTo suivants seront plus précis.
+5. **STOP** arrête tout, immédiatement. En fin de séance : parquez la monture, puis Déconnecter.
+
+Sécurité : les objets sous l'horizon sont refusés (la hauteur minimale se règle). Le Soleil est refusé sauf si vous cochez « filtre solaire certifié installé ». Une alerte s'affiche si l'objet est à moins de 20° du Soleil levé. Les flèches s'arrêtent dès qu'on relâche, et au plus tard après 20 s ; une monture parquée bloque GoTo et flèches. Le GoTo utilise toujours l'heure réelle, même si le curseur du temps est déplacé.
+
+**Simulateur** : choisissez « Simulateur (aucun matériel) » pour tout essayer sans télescope. La monture fictive a une erreur de pointage volontaire de 0,4°/−0,3°, pour s'entraîner au Sync. La passerelle simule aussi LX200, NexStar, Alpaca et INDI (liaison « Passerelle PC → monture simulée »).
+
 ## Fichiers
-`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
+`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `telescope.js` (contrôle de télescope), `celeste_bridge.py` (passerelle PC), `LICENSES.txt`.
 
 ## Limites connues
 - Catalogue limité à mag ≈ 6 (≈ 5 000 étoiles) ; pas d'objets du ciel profond (Messier) ni de satellites/ISS.
 - Positions des étoiles J2000 sans mouvement propre (écart négligeable à l'œil sur quelques décennies) ; précession/nutation et réfraction appliquées via astronomy-engine.
 - Le cap boussole des téléphones est magnétique (déclinaison ≈ 0–1° en France) et sensible aux perturbations : utiliser le curseur « Cap ». Le champ caméra réel varie selon le modèle (curseur « Champ »).
+- Télescope : protocoles écrits d'après les documentations publiques (NexStar Communication Protocol, Meade LX200 Command Set, ASCOM Alpaca, INDI) et testés contre des montures **simulées** (dans le navigateur, dans la passerelle, et via un vrai port série virtuel), **jamais sur du vrai matériel**. Le sens des flèches peut être inversé selon la monture. Pas de suivi d'un satellite. Arrêt du suivi impossible sur certaines raquettes LX200 Meade (pas de commande documentée). Pas de commande de parcage dans le protocole NexStar (parquez avec la raquette).
 - Mode sans gyroscope : le lissage ajoute un retard d'environ 3° quand on tourne à 10°/s ; un calibrage sur étoile ne compense pas une perturbation magnétique qui change (voiture, rambarde) ; filtre testé sur des flux de capteurs simulés (profil A15), pas sur un vrai A15.
 - L'indice 0–5 est une heuristique (la météo n'est disponible que de la veille à J+2) (nuages, humidité, visibilité, vent, pluie) ; il n'intègre ni la turbulence (seeing) ni la pollution lumineuse ; la Lune est indiquée à part.
 - Voie lactée stylisée (procédurale), pas une photographie.

@@ -664,6 +664,7 @@ function render() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   drawSelection();
   drawLaser(); drawGuide(); drawCalReticle();
+  if (window.CELESTE_TEL) window.CELESTE_TEL.draw(ctx, projEqj);
   updateHud();
 }
 function selectedNEU() {
@@ -780,6 +781,7 @@ function renderInfo() {
     <dt>Altitude du centre</dt><dd>${fmtDeg(alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(az)} ${cardinal(az)}</dd>${riseRows(r, ms)}</dl>`;
   }
   html += `<div class="row-btns"><button class="btn" id="centerSel">Centrer</button></div>`;
+  if (window.CELESTE_TEL && window.CELESTE_TEL.connected() && s.kind !== 'sat') html += '<div class="tel-act"><button class="btn accent" data-telgoto type="button">🔭 GoTo télescope</button></div>';
   $('infoContent').innerHTML = html;
   $('centerSel').onclick = () => centerOn(S.selected);
 }
@@ -842,7 +844,7 @@ function handleTap(x, y, touch) {
   if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
-function select(s) { S.selected = s; renderInfo(); S.dirty = true; }
+function select(s) { S.selected = s; if (window.CELESTE_TEL) window.CELESTE_TEL.onSelect(s); renderInfo(); S.dirty = true; }
 function objAltAz(s) {
   const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : s.kind === 'mes' ? mesNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   return neuToAltAz(v);
@@ -926,7 +928,7 @@ let toastTimer = 0;
 function toast(msg, ms = 4200) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms); }
 
 /* ---------------- Panneaux ---------------- */
-const PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier'];
+const PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier', 'telescope'];
 function openPanel(name, forceOpen) {
   const el = $('panel-' + name); const willOpen = forceOpen || el.classList.contains('hidden');
   PANELS.forEach(n => $('panel-' + n).classList.toggle('hidden', !(n === name && willOpen)));
@@ -935,6 +937,7 @@ function openPanel(name, forceOpen) {
   if (window.innerWidth <= 720) select(null);
   if (name === 'tonight') renderTonight();
   if (name === 'forecast') loadForecast();
+  if (name === 'telescope' && window.CELESTE_TEL) window.CELESTE_TEL.onOpen();
 }
 document.querySelectorAll('.fab[data-panel]').forEach(b => b.onclick = () => openPanel(b.dataset.panel));
 $('locBtn').onclick = () => openPanel('location');
@@ -2549,6 +2552,7 @@ $('satCountry').onchange = e => {
   if (S.selected && S.selected.kind === 'sat' && !satPassesFilter(SAT.byId.get(S.selected.id))) select(null);
   if (!$('panel-sats').classList.contains('hidden')) renderPasses();
 };
+$('telOpenBtn').onclick = () => openPanel('telescope', true);
 $('mesMarBtn').onclick = () => { openPanel('messier', true); renderMarathon(); };
 $('satPassBtn').onclick = () => { openPanel('sats', true); satEnsureData(); startPassJob(); };
 /* ---------------- Pays / organisation propriétaire (CelesTrak SATCAT, champ OWNER) ---------------- */
@@ -2707,7 +2711,17 @@ document.addEventListener('visibilitychange', () => {
 initQuality(); syncSatUI(); if (SAT.adv) satEnsureData(); applyNight(); syncLocUI(); syncTimeUI(); syncLaserUI(); syncQualityUI(); resize(); updateSky(true);
 requestAnimationFrame(frame);
 if ((location.protocol === 'https:' || location.hostname === 'localhost') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+/* ---------------- Télescope (telescope.js) : coordonnées J2000 de l'objet choisi, projection ---------------- */
+function telTarget(s) {
+  if (!s) return null; const name = objName(s);
+  if (s.kind === 'sat') return { name, kind: 'sat' };
+  if (s.kind === 'body') return { name, kind: 'body', key: BODIES[s.bi].key };
+  const [ra, dec] = s.kind === 'star' ? [SRA[s.i], SDEC[s.i]] : s.kind === 'mes' ? [MES[s.i].ra, MES[s.i].de] : s.kind === 'xo' ? [XO[s.i].ra, XO[s.i].de] : [s.c.ra, s.c.dec];
+  return { name, kind: s.kind, ra, dec };
+}
+function projEqj(v) { const n = eqjToNEU(v[0], v[1], v[2], [0, 0, 0]); return proj(n[0], n[1], n[2]) ? { x: P.x, y: P.y } : null; }
 window.__celeste = {
+  telTarget, toast, dirty() { S.dirty = true; }, refreshInfo() { if (S.selected) renderInfo(); }, projEqj,
   S, sky, AR, select, centerOn, setLocation, openPanel, loadForecast, forecastState, BODIES,
   setTime(ms) { S.live = false; S.playing = false; S.anchor = ms; S.slider = 0; slider.value = 0; syncTimeUI(); S.dirty = true; updateSky(true); },
   bodyAltAz() { updateSky(true); return sky.bodies.map(b => ({ key: b.b.key, alt: b.alt, az: b.az, mag: b.mag })); },
