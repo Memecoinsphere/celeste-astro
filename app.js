@@ -15,7 +15,7 @@ const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const DEFAULT_LOC = { name: 'La Rochelle', lat: 46.16, lon: -1.15, tz: 'Europe/Paris' };
 const S = {
   loc: { ...DEFAULT_LOC },
-  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true },
+  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true, extreme: false },
   quality: 'auto',
   magLimit: 6,
   az: 180 * DEG, alt: 28 * DEG, fov: 100 * DEG,
@@ -620,6 +620,7 @@ function render() {
     picks.push({ kind: 'body', bi, x, y, r: r + 4, pri: -30 });
     bodyLabels.push([bs.b.fr, x, y, r, bs.b.key]);
   }
+  drawExtreme(groundOn);
   drawSats(camOn, groundOn);
   drawGround();
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
@@ -670,6 +671,7 @@ function selectedNEU() {
   if (s.kind === 'body') return sky.bodies[s.bi].neu;
   if (s.kind === 'con') return eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   if (s.kind === 'sat') return satNEU(s.id);
+  if (s.kind === 'xo') return xoNEU(s.i);
   return null;
 }
 function drawSelection() {
@@ -714,7 +716,7 @@ function starName(i) {
   if (n && n[1]) { const c = consById[n[2]]; return `${n[1]} ${c ? c.gen : n[2]}`; }
   return `HIP ${SHIP[i]}`;
 }
-function objName(s) { if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
+function objName(s) { if (s.kind === 'xo') return XO[s.i].n.replace(/ \(.*\)$/, ''); if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
 function spectralHint(bv) { if (bv < 0) return 'bleu-blanc (type O/B)'; if (bv < 0.3) return 'blanc (type A)'; if (bv < 0.58) return 'blanc-jaune (type F)'; if (bv < 0.81) return 'jaune (type G)'; if (bv < 1.4) return 'orangé (type K)'; return 'rouge-orangé (type M)'; }
 function riseRows(r, refMs) {
   if (r.circumpolar) return `<dt>Lever / coucher</dt><dd>Circumpolaire</dd><dt>Passage méridien</dt><dd>${hmRel(r.transit, refMs)} (${fmtDeg(r.transitAlt, 0)})</dd>`;
@@ -727,7 +729,8 @@ function renderInfo() {
   card.classList.remove('hidden');
   const ms = simMs(); let html = '';
   const upTag = alt => alt > 0 ? '<span class="tag ok">Au-dessus de l\'horizon</span>' : `<span class="tag no">${belowText(s, alt).replace(/^s/, 'S')}</span><br>`;
-  if (s.kind === 'sat') {
+  if (s.kind === 'xo') html = xoInfoHtml(s.i, ms, upTag);
+  else if (s.kind === 'sat') {
     const I = satInfoParts(s.id);
     if (!I) html = '<h3>Satellite</h3><div class="sub">Données orbitales indisponibles</div>';
     else {
@@ -829,16 +832,16 @@ function handleTap(x, y, touch) {
   for (const p of picks) {
     if (p.kind === 'con') continue;
     const d = Math.hypot(p.x - x, p.y - y) - p.r * 0.6;
-    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : -6);
+    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : p.kind === 'xo' ? -5 : -6);
     if (d < th && score < bd) { bd = score; best = p; }
   }
   if (!best) for (const p of picks) if (p.kind === 'con' && Math.abs(p.x - x) < p.r + 8 && Math.abs(p.y - y) < 12) { best = p; break; }
-  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : { kind: 'con', c: best.c });
+  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
 function select(s) { S.selected = s; renderInfo(); S.dirty = true; }
 function objAltAz(s) {
-  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
+  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   return neuToAltAz(v);
 }
 function centerOn(s, fovDeg) {
@@ -1197,13 +1200,75 @@ function renderConditions(force) {
 }
 function drawForecastChart() { renderConditions(true); } // compatibilité (redimensionnement)
 
+/* ---------------- Objets extrêmes (extreme.js : coordonnées SIMBAD J2000) ---------------- */
+const XO = (window.CELESTE_XO || []).map(o => ({ ...o, v3: vecFromRaDec(o.ra, o.de), neu: [0, 0, -1] }));
+const XO_TYPES = {
+  bh: { fr: 'Trou noir', col: '190,140,255' }, snr: { fr: 'Rémanent de supernova', col: '255,160,90' }, psr: { fr: 'Pulsar / étoile à neutrons', col: '110,225,255' },
+  mag: { fr: 'Magnétar', col: '255,110,200' }, qso: { fr: 'Quasar / noyau actif', col: '255,235,140' }, star: { fr: 'Étoile hors normes', col: '255,120,100' }
+};
+const XO_VIS = { oeil: ['ok', 'Visible à l\'œil nu'], jumelles: ['ok', 'Jumelles / petit instrument'], tele: ['', 'Télescope'], grand: ['', 'Grand télescope'], invisible: ['no', 'Invisible en lumière visible (radio / X / gamma)'] };
+XO.forEach((o, i) => INDEX.push({ label: o.n, sub: `${XO_TYPES[o.t].fr}${o.yr ? ' · ' + o.yr : ''} · objet extrême`, keys: [fold(o.n), ...o.k.map(fold), fold(o.sim), fold(XO_TYPES[o.t].fr), 'objet extreme', ...(o.t === 'snr' ? ['supernova'] : o.t === 'qso' ? ['quasar'] : o.t === 'mag' ? ['magnetar'] : o.t === 'psr' ? ['pulsar', 'etoile a neutrons'] : o.t === 'bh' ? ['trou noir'] : [])], sel: { kind: 'xo', i }, rank: 1.5 }));
+let xoKey = '';
+function xoUpdate() { // positions : une fois par changement de rotation (≈ 1 s en temps réel), 53 objets
+  const k = frameKey; if (k === xoKey) return; xoKey = k;
+  for (const o of XO) eqjToNEU(o.v3[0], o.v3[1], o.v3[2], o.neu);
+}
+function xoIcon(t, x, y, c) {
+  ctx.strokeStyle = `rgb(${c})`; ctx.fillStyle = `rgb(${c})`; ctx.lineWidth = 1.5; ctx.beginPath();
+  if (t === 'bh') { ctx.arc(x, y, 6, 0, 6.2832); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 6.2832); ctx.fillStyle = '#05030b'; ctx.fill(); ctx.beginPath(); ctx.ellipse(x, y, 9, 2.6, -0.45, 0, 6.2832); ctx.globalAlpha = 0.7; ctx.stroke(); ctx.globalAlpha = 1; }
+  else if (t === 'snr') { for (let k = 0; k < 8; k++) { const a = k * 0.785; ctx.moveTo(x + Math.cos(a) * 3, y + Math.sin(a) * 3); ctx.lineTo(x + Math.cos(a) * 7, y + Math.sin(a) * 7); } ctx.stroke(); ctx.beginPath(); ctx.setLineDash([2, 2]); ctx.arc(x, y, 8.5, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]); }
+  else if (t === 'psr') { ctx.arc(x, y, 2.6, 0, 6.2832); ctx.fill(); ctx.beginPath(); ctx.moveTo(x - 9, y + 7); ctx.lineTo(x + 9, y - 7); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 6.2832); ctx.globalAlpha = 0.6; ctx.stroke(); ctx.globalAlpha = 1; }
+  else if (t === 'mag') { ctx.arc(x, y, 2.6, 0, 6.2832); ctx.fill(); ctx.beginPath(); ctx.ellipse(x - 4.5, y, 4.5, 6.5, 0, 0, 6.2832); ctx.moveTo(x + 9, y); ctx.ellipse(x + 4.5, y, 4.5, 6.5, 0, 0, 6.2832); ctx.stroke(); }
+  else if (t === 'qso') { ctx.moveTo(x, y - 6); ctx.lineTo(x + 4, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 4, y); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x - 5.5, y); ctx.moveTo(x + 5.5, y); ctx.lineTo(x + 9, y); ctx.stroke(); }
+  else { for (let k = 0; k < 10; k++) { const a = k * 0.6283 - 1.5708, r = k % 2 ? 2.6 : 6.5; k ? ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r) : ctx.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); ctx.stroke(); }
+}
+const xoLab = [], xoLabF = [];
+function drawExtreme(groundOn) {
+  const selI = S.selected && S.selected.kind === 'xo' ? S.selected.i : -1, lzI = LASER.target && LASER.target.kind === 'xo' ? LASER.target.i : -1;
+  if (!S.opts.extreme && selI < 0 && lzI < 0) return;
+  xoUpdate();
+  ctx.save(); ctx.font = '600 11.5px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  for (let i = 0; i < XO.length; i++) {
+    if (!S.opts.extreme && i !== selI && i !== lzI) continue;
+    const o = XO[i], v = o.neu; if (groundOn && v[2] < -0.01) continue;
+    if (!proj(v[0], v[1], v[2]) || !onScreen(14)) continue;
+    const x = P.x, y = P.y, c = XO_TYPES[o.t].col;
+    xoIcon(o.t, x, y, c);
+    picks.push({ kind: 'xo', i, x, y, r: 12, pri: -8 });
+    (i === selI || i === lzI ? xoLabF : xoLab).push(i, x, y);
+  }
+  // étiquettes : l'objet sélectionné / visé d'abord (prioritaire), puis les autres seulement s'il reste de la place
+  for (const [L, force] of [[xoLabF, true], [xoLab, false]]) {
+    for (let k = 0; k < L.length; k += 3) {
+      const o = XO[L[k]], x = L[k + 1], y = L[k + 2], lab = o.n.replace(/ \(.*\)$/, ''), tw = textW(lab, ctx.font);
+      if (labelFits(x + 11, y - 7, tw, 14) || force) { ctx.fillStyle = `rgba(${XO_TYPES[o.t].col},.92)`; ctx.fillText(lab, x + 11, y); }
+    }
+    L.length = 0;
+    if (V.fovDeg >= 110) { xoLab.length = 0; break; }
+  }
+  ctx.restore();
+}
+function xoInfoHtml(i, ms, upTag) {
+  const o = XO[i], T = XO_TYPES[o.t], aa = neuToAltAz(xoNEU(i)), vis = XO_VIS[o.vis] || ['', ''];
+  const r = riseTransitSet('star', o.ra / 15, o.de, ms); let con = ''; try { con = consFr(A.Constellation(o.ra / 15, o.de).symbol); } catch (e) {}
+  return `<h3><span class="xo-ico" style="color:rgb(${T.col})">${XO_GLYPH[o.t]}</span> ${o.n}</h3><div class="sub">${T.fr}${o.yr ? ' · supernova de ' + o.yr : ''}${con ? ' · ' + con : ''}</div>${upTag(aa.alt)}<span class="tag ${vis[0]}">${vis[1]}</span>
+  <p class="xo-desc">${o.desc}</p>
+  <dl class="kv"><dt>Type</dt><dd>${T.fr}</dd><dt>Distance</dt><dd>${o.d}</dd>${o.m ? `<dt>Masse</dt><dd>${o.m}</dd>` : ''}${o.per ? `<dt>Période de rotation</dt><dd>${o.per < 0.1 ? num(o.per * 1000, 2) + ' ms' : num(o.per, 3) + ' s'}</dd>` : ''}${o.b ? `<dt>Champ magnétique</dt><dd>${o.b}</dd>` : ''}
+  <dt>Magnitude</dt><dd>${o.v != null ? num(o.v, 1) : '—'}</dd><dt>Observation</dt><dd>${o.vn}</dd>
+  <dt>Asc. droite (J2000)</dt><dd>${fmtRA(o.ra / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(o.de)}</dd><dt>Altitude</dt><dd>${fmtDeg(aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(aa.az)} ${cardinal(aa.az)}</dd>${riseRows(r, ms)}
+  <dt>Sources</dt><dd>SIMBAD « ${o.sim} » ; ${o.src}</dd></dl>`;
+}
+const XO_GLYPH = { bh: '◉', snr: '✺', psr: '⊘', mag: '∞', qso: '◆', star: '✩' };
+function xoNEU(i) { xoUpdate(); return XO[i].neu; }
+
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
 const laserActive = () => !!S.opts.laser;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
-const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.c === b.c);
+const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' ? a.i === b.i : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
 function laserScore(sel, R) {
+  if (sel.kind === 'xo') { const sep = sepDeg(xoNEU(sel.i)); return { sep, score: sep / R - 0.3 }; }
   if (sel.kind === 'sat') { const c = satCur(sel.id); if (!c) return { sep: 999, score: 99 }; const sep = sepDeg(c); return { sep, score: sep / R - (c[4] ? 0.35 : 0) }; }
   if (sel.kind === 'body') {
     const bs = sky.bodies[sel.bi]; const sep = sepDeg(bs.neu) - bs.angRad * RAD;
@@ -1222,7 +1287,7 @@ function centreConstellation() {
 function updateLaser(now) {
   if (now - LASER.last < (AR.on ? 125 : 160)) return; // ~6-8 Hz
   // vue et ciel inchangés : inutile de refaire la recherche (sauf rafraîchissement lent du panneau)
-  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '');
+  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '') + (S.opts.extreme ? 'x' : '');
   if (vk === LASER.vk && now - LASER.last < 1500) return;
   LASER.vk = vk; LASER.last = now;
   const prev = LASER.target;
@@ -1236,6 +1301,10 @@ function updateLaser(now) {
     const r = laserScore({ kind: 'body', bi }, R);
     if (r.sep < R * 1.2 && r.score < bestScore) { bestScore = r.score; best = { kind: 'body', bi }; }
   });
+  if (S.opts.extreme) { xoUpdate(); for (let i = 0; i < XO.length; i++) { // objets extrêmes (prioritaires sur les étoiles proches)
+    const v = XO[i].neu; if (groundOn && v[2] < 0) continue; const sep = sepDeg(v); if (sep > R * 1.2) continue;
+    const sc = sep / R - 0.3; if (sc < bestScore) { bestScore = sc; best = { kind: 'xo', i }; }
+  } }
   if (satOn()) for (const st of SAT.fine) { // satellites (éclairés en priorité sur les étoiles)
     if (!st.ok || (groundOn && st.cur[2] < 0)) continue;
     const c = st.cur, sep = sepDeg(c); if (sep > R * 1.2) continue;
@@ -1271,6 +1340,7 @@ function updateLaser(now) {
   renderLaserPanel(now);
 }
 function distText(sel) {
+  if (sel.kind === 'xo') return XO[sel.i].d;
   if (sel.kind === 'sat') { const c = satCur(sel.id); return c ? `${Math.round(c[3]).toLocaleString('fr-FR')} km` : 'inconnue'; }
   if (sel.kind === 'star') {
     const ex = D.extra && D.extra[SHIP[sel.i]]; const pc = ex ? ex[0] : 0;
@@ -1298,6 +1368,16 @@ function renderLaserPanel(now) {
   }
   el.classList.remove('empty');
   const ms = simMs(); let name, type, con = '', mag, aa, r;
+  if (t.kind === 'xo') {
+    const o = XO[t.i], T = XO_TYPES[o.t], aa = neuToAltAz(xoNEU(t.i)), r = riseTransitSet('star', o.ra / 15, o.de, ms), vis = XO_VIS[o.vis] || ['', ''];
+    const rs = r.circumpolar ? 'circumpolaire' : r.never ? 'ne se lève pas' : `↑ ${hmRel(r.rise, ms)} · ↓ ${hmRel(r.set, ms)}`;
+    el.innerHTML = `<div class="lz-name"><span class="lz-dot on"></span><span class="xo-ico" style="color:rgb(${T.col})">${XO_GLYPH[o.t]}</span> ${o.n.replace(/ \(.*\)$/, '')}<small>${T.fr}</small></div>
+    <div class="lz-row"><span>${o.d}</span>${o.m ? `<span>${o.m.replace(/ —.*$/, '')}</span>` : ''}${o.v != null ? `<span>mag ${num(o.v, 1)}</span>` : ''}</div>
+    <div class="lz-row"><span class="lz-vis ${vis[0]}">${vis[1]}</span></div>
+    <div class="lz-row"><span>Alt ${fmtDeg(aa.alt, 1)} · Az ${fmtDeg(aa.az, 0)} ${cardinal(aa.az)}</span><span>${rs}</span></div>
+    <div class="lz-hint">Touchez pour la fiche complète</div>`;
+    return;
+  }
   if (t.kind === 'sat') {
     const I = satInfoParts(t.id); if (!I) { el.innerHTML = '<div class="lz-name">Satellite</div>'; return; }
     const np = I.aa.alt > 0 ? null : satNextPass(I.s);
@@ -1357,7 +1437,7 @@ function drawLaser() {
   // cible
   const tg = LASER.target; let tx = null, ty = null;
   if (tg) {
-    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : sky.bodies[tg.bi].neu;
+    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : tg.kind === 'xo' ? xoNEU(tg.i) : sky.bodies[tg.bi].neu;
     if (proj(v[0], v[1], v[2])) {
       tx = P.x; ty = P.y;
       ctx.strokeStyle = 'rgba(110,255,160,.95)'; ctx.lineWidth = 1.6; ctx.shadowColor = '#3cff78'; ctx.shadowBlur = 8;
@@ -1381,17 +1461,18 @@ function selNEU(sel) {
   if (sel.kind === 'star') return [SN[sel.i], SE[sel.i], SU[sel.i]];
   if (sel.kind === 'body') return sky.bodies[sel.bi].neu;
   if (sel.kind === 'sat') return satNEU(sel.id);
+  if (sel.kind === 'xo') return xoNEU(sel.i);
   return eqjToNEU(sel.c.v[0], sel.c.v[1], sel.c.v[2], [0, 0, 0]);
 }
 const nextRiseCache = new Map();
 function nextRiseMs(sel) {
   if (sel.kind === 'sat') { const s = SAT.byId.get(sel.id); const p = s && SATLIB ? satNextPass(s) : null; return p ? p.rise : null; }
   const ms = simMs();
-  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
+  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : sel.kind === 'xo' ? 'x' + sel.i : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
   if (nextRiseCache.has(key)) return nextRiseCache.get(key);
   let body;
   if (sel.kind === 'body') body = BODIES[sel.bi].key;
-  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
+  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.kind === 'xo' ? XO[sel.i].ra / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.kind === 'xo' ? XO[sel.i].de : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
   let r = null; try { r = msOf(A.SearchRiseSet(body, observer, +1, A.MakeTime(new Date(ms)), 2)); } catch (e) {}
   if (nextRiseCache.size > 200) nextRiseCache.clear();
   nextRiseCache.set(key, r); return r;
@@ -1405,7 +1486,7 @@ function goToObject(sel) {
   const { alt, az } = objAltAz(sel);
   if (AR.on) { setGuideTarget(sel); return; }
   const key = sel.kind === 'body' ? BODIES[sel.bi].key : '';
-  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : 40;
+  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : sel.kind === 'xo' ? 30 : 40;
   S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(az, S.az * RAD) * DEG, alt1: clamp(alt, -89, 89) * DEG, fov1: fovT * DEG };
   select(sel);
   if (sel.kind !== 'con' && laserActive()) { LASER.pin = sel; LASER.target = sel; LASER.key = ''; LASER.vk = ''; }
@@ -2184,6 +2265,7 @@ window.__celeste = {
   sat: () => { const s = SAT.byId.get(25544), c = s && satCur(25544); return { adv: SAT.adv, opts: { ...SAT.opts }, groups: Object.fromEntries(Object.entries(SAT.g).map(([k, v]) => [k, { n: v.list.length, state: v.state, note: v.note }])), fine: SAT.fine.length, drawn: SAT.drawn, cand: SAT.cand.length, iss: c ? { ...neuToAltAz(c), range: c[3], lit: c[4], mag: c[5], speed: c[6] } : null, passes: SAT.passes ? SAT.passes.length : null, passJob: !!SAT.passJob }; },
   owner: id => ownerOf(SAT.byId.get(id)), ownStats: () => ({ known: OWN.byId.size, g: JSON.parse(JSON.stringify(OWN.g)), ver: OWN.ver, lazy: [...OWN.lazy] }),
   fineOwn: () => [...new Set(SAT.fine.map(ownFilterKey))],
+  xo: () => ({ n: XO.length, on: !!S.opts.extreme, list: XO.map((o, i) => ({ i, id: o.id, n: o.n, t: o.t, ...neuToAltAz(xoNEU(i)) })) }),
   satPasses: () => (SAT.passes || []).map(p => ({ id: p.s.id, own: ownerShort(p.s), code: ownFilterKey(p.s), name: p.s.short, rise: p.rise, max: p.max, set: p.set, maxEl: p.maxEl, azR: p.azR, azM: p.azM, azS: p.azS, mag: p.mag, iss: p.s.iss })),
   satAt: (id, ms) => { const s = SAT.byId.get(id); if (!s) return null; obSetup(); const d = new Date(ms), o = new Float64Array(7); if (!satState(s, d, SATLIB.gstime(d), sunEci(ms), o)) return null; const pv = SATLIB.propagate(s.rec, d), g = SATLIB.eciToGeodetic(pv.position, SATLIB.gstime(d)); return { ...neuToAltAz(o), range: o[3], lit: o[4], lat: g.latitude * RAD, lon: g.longitude * RAD, h: g.height }; },
   simMs, search(q) { si.value = q; doSearch(); pickResult(0); }

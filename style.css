@@ -290,3 +290,9 @@ body.lite #arGuide{background:rgba(24,19,4,.93)}
 .sat-country span{font-size:13px;color:#c9d3f0}
 #satCountry{min-height:44px;width:100%;border-radius:12px;background:rgba(255,255,255,.06);color:inherit;border:1px solid var(--line);padding:0 10px;font-size:15px}
 #satCountry option{background:#141a2e;color:#e8ecff}
+
+/* ---- v8 : objets extrêmes ---- */
+.xo-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:2px 2px 10px 34px;font-size:12.5px}
+.xo-ico{font-weight:700}
+.xo-desc{margin:10px 0 8px;font-size:14px;line-height:1.45;color:#dfe6ff}
+.lz-vis{font-size:12.5px}.lz-vis.ok{color:#9ff0b5}.lz-vis.no{color:#ffb4a8}

@@ -39,3 +39,5 @@ Tout le reste du code (app.js, style.css, index.html, sw.js) est original.
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 6) Éléments orbitaux et pays propriétaires (SATCAT) des satellites : CelesTrak (https://celestrak.org, Dr T.S. Kelso), téléchargés en direct par l'application (aucune donnée embarquée).
+
+7) Objets extrêmes (extreme.js) : coordonnées issues de la base SIMBAD (CDS, Strasbourg — « This research has made use of the SIMBAD database, operated at CDS, Strasbourg, France ») ; périodes et distances des pulsars : ATNF Pulsar Catalogue v2.6.1 (Manchester et al. 2005) ; distances, masses et descriptions : publications citées objet par objet. Textes français originaux.

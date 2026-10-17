@@ -34,6 +34,11 @@ Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis l
 - **Pays / organisation** : drapeau + nom (champ OWNER du catalogue SATCAT de CelesTrak, `satcat/records.php?GROUP=…&FORMAT=json`, cache 7 jours ; Starlink = États-Unis/SpaceX sans téléchargement). Affiché dans la fiche, le panneau du laser et la liste des passages ; filtre par pays dans *Calques*. Sans données : « Pays inconnu ».
 - **Prochains passages (24 h)** : lever / maximum / coucher, hauteur max, directions ; l'ISS est en tête. Toucher un passage règle l'heure et vise le satellite.
 
+## Couche « Objets extrêmes »
+- À activer dans *Calques* : 53 objets — trous noirs (Sgr A*, M87*, Cygnus X-1, V404 Cyg, Gaia BH1/2/3, A0620-00, GRS 1915+105…), rémanents et supernovae historiques (Crabe/1054, Cassiopée A, Tycho 1572, Kepler 1604, SN 1006, SN 185, SN 1987A, Vela, Dentelles du Cygne, IC 443, Simeis 147…), pulsars (Crabe, Vela, PSR B1919+21, Geminga, Hulse-Taylor…), magnétars (SGR 1806-20, SGR 1900+14, SGR 1935+2154), quasars (3C 273, 3C 48, TON 618…) et étoiles hors normes (Bételgeuse, Êta Carinae, VY CMa, WR 104, T CrB).
+- Icône distincte par type, sélection au toucher, au laser et par la recherche (même couche désactivée). Fiche en français : type, distance, masse, magnitude et visibilité (œil nu / jumelles / télescope / invisible), description, sources.
+- Coordonnées : SIMBAD (ICRS/J2000) ; pulsars : catalogue ATNF v2.6.1 ; distances et masses : publications citées dans chaque fiche (`extreme.js`).
+
 ## Fichiers
 `index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
 
