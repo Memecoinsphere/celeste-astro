@@ -105,8 +105,25 @@
       <label><input type="checkbox" data-opt="ground" checked> Sol opaque</label>
       <label><input type="checkbox" data-opt="atmosphere" checked> Atmosphère (ciel de jour)</label>
       <label><input type="checkbox" data-opt="laser"> Pointeur laser (carte et mode caméra)</label>
+      <div id="satSection" class="sat-section hidden">
+        <div class="sect">Satellites <span class="adv-tag">mode avancé</span></div>
+        <label><input type="checkbox" data-sat="iss"> ISS (station spatiale internationale)</label>
+        <label><input type="checkbox" data-sat="stations"> Autres stations (Tiangong…)</label>
+        <label><input type="checkbox" data-sat="visual"> Satellites brillants</label>
+        <label><input type="checkbox" data-sat="starlink"> Starlink (nombre limité selon l'appareil)</label>
+        <button id="satPassBtn" class="btn accent" type="button">Prochains passages visibles (24 h)</button>
+        <div id="satStatus" class="fine"></div>
+      </div>
       <div class="field"><span>Qualité graphique</span><select id="qualitySel" aria-label="Qualité graphique"><option value="auto">Auto (adaptative)</option><option value="high">Haute</option><option value="medium">Moyenne</option><option value="low">Économie batterie</option></select></div>
       <div class="field"><span>Magnitude limite</span><input id="magLimit" type="range" min="3" max="6.5" step="0.1" value="6"><b id="magLimitVal">6.0</b></div>
+    </div>
+  </section>
+
+  <section id="panel-sats" class="panel hidden">
+    <div class="panel-head"><h2>Passages de satellites · 24 h</h2><button class="close" data-close="panel-sats" aria-label="Fermer">×</button></div>
+    <div class="panel-body">
+      <div id="satPassList"></div>
+      <p class="fine">Passages visibles depuis votre lieu : satellite éclairé par le Soleil pendant que le ciel est sombre (Soleil sous −6°), hauteur maximale ≥ 10°. Touchez un passage pour régler l'heure sur son maximum et viser le satellite. Orbites : CelesTrak (TLE), calcul SGP4 (satellite.js).</p>
     </div>
   </section>
 
@@ -155,6 +172,7 @@
 <div id="redFilter"></div>
 <script src="astronomy.browser.min.js"></script>
 <script src="skydata.js"></script>
+<script src="satellite.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

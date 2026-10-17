@@ -262,3 +262,21 @@ body.lite #arGuide{background:rgba(24,19,4,.93)}
 .c6 li.best .c6-h::after{content:" ★";color:#7dffa8}
 .c6-l2{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:5px;font-size:12px;color:#c3cbe6;align-items:center}
 .c6-l2 .cstate{margin-top:0}
+
+/* ---- v6 : satellites (mode avancé) ---- */
+.brand{cursor:pointer;user-select:none;-webkit-user-select:none}
+@media (max-width:720px){ .brand{display:flex;padding:0;width:44px;height:44px;justify-content:center;flex:none} .brand .brand-name{display:none} }
+.sat-section{margin:6px 0 4px;padding:8px 10px 10px;border-radius:14px;background:rgba(255,214,110,.05);border:1px solid rgba(255,214,110,.22)}
+.sat-section .sect{margin:2px 0 4px}
+.adv-tag{font-size:10px;letter-spacing:.5px;padding:2px 6px;border-radius:999px;background:rgba(255,214,110,.18);color:#ffd66e;text-transform:none;margin-left:6px}
+#satPassBtn{width:100%;margin-top:8px}
+.passes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.passes li{padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.035);border:1px solid var(--line);cursor:pointer;min-height:44px}
+.passes li.iss{border-color:rgba(255,214,110,.6);background:rgba(255,200,80,.1)}
+.passes li.iss b:first-child{color:#ffd66e}
+.ps-l1{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:14px}
+.ps-l1 span{color:#c9d3f0;font-size:13px;font-variant-numeric:tabular-nums}
+.ps-l2{display:flex;gap:4px 14px;flex-wrap:wrap;margin-top:4px;font-size:12.5px;color:#b9c3e2;font-variant-numeric:tabular-nums}
+.sat-section .sect{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:#ffd66e;font-weight:600}
+.ps-h{margin:12px 0 6px;font-size:13px;color:#dfe6ff;font-weight:600}.ps-h small{color:#9aa6c8;font-weight:400}#satPassList .ps-h:first-child{margin-top:0;color:#ffd66e}
+.ps-vis{color:#ffe39a}

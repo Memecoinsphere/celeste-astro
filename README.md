@@ -26,6 +26,13 @@ Options :
 3. **Tunnel temporaire** : `python3 -m http.server 8000` puis `cloudflared tunnel --url http://localhost:8000` (URL https://….trycloudflare.com sans compte, valable tant que la commande tourne).
 Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis la caméra. Si refusé : Réglages › Apps › Safari › Mouvement et orientation.
 
+## Mode avancé : satellites (caché)
+- **Activer** : touchez 5 fois de suite le logo ✦ en haut à gauche → « Mode avancé activé ». Même geste pour désactiver. L'état est mémorisé (localStorage).
+- Une section **Satellites** apparaît dans *Calques* : ISS, autres stations (Tiangong…), satellites brillants, Starlink (nombre limité selon l'appareil : 600 / 250 / 100 selon la qualité Haute / Moyenne / Économie).
+- Orbites : CelesTrak (`gp.php?GROUP=stations|visual|starlink&FORMAT=tle`), mises en cache ~6 h ; hors ligne, la dernière copie est utilisée. Calcul SGP4 avec satellite.js (MIT, embarqué).
+- Positions vraies vues depuis votre lieu ; satellite éclairé (brillant) ou dans l'ombre de la Terre (anneau gris), traînée courte. Sélection par toucher, pointeur laser ou recherche (« ISS »). Fiche : altitude, distance, vitesse, éclairé/ombre, magnitude estimée, prochain passage.
+- **Prochains passages (24 h)** : lever / maximum / coucher, hauteur max, directions ; l'ISS est en tête. Toucher un passage règle l'heure et vise le satellite.
+
 ## Fichiers
 `index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
 
@@ -36,3 +43,4 @@ Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis l
 - L'indice 0–5 est une heuristique (la météo n'est disponible que de la veille à J+2) (nuages, humidité, visibilité, vent, pluie) ; il n'intègre ni la turbulence (seeing) ni la pollution lumineuse ; la Lune est indiquée à part.
 - Voie lactée stylisée (procédurale), pas une photographie.
 - Optimisations mesurées dans Chromium en émulation (Galaxy A15, processeur bridé ×4), pas sur un vrai téléphone : le rendu GPU réel d'un Mali-G57 diffère.
+- Satellites : ombre de la Terre modélisée comme un cylindre (pénombre ignorée), magnitudes estimées (modèle de sphère diffuse), positions TEME non converties en J2000 pour le tracé (écart < 0,3°), Starlink masqués en lecture très accélérée, passages calculés par pas de 60 s (hauteur max ≥ 10°). CelesTrak peut limiter les téléchargements répétés.
