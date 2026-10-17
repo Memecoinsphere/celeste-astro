@@ -145,7 +145,18 @@ body.ar .fab:not(#arBtn):not(#nightBtn){display:none}
 .lz-row{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;color:#cfeedd;font-variant-numeric:tabular-nums}
 .lz-hint{margin-top:5px;font-size:11px;color:#7fbf98}
 body.night #laserPanel{background:rgba(20,0,0,.8)}
-#toast{position:absolute;left:50%;top:calc(70px + var(--sat));transform:translateX(-50%);padding:10px 16px;border-radius:999px;background:var(--glass2);border:1px solid var(--line);z-index:20;font-size:13.5px;max-width:90vw;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+/* Guidage */
+#arGuide{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(150px + var(--sab));width:min(420px,calc(100% - 24px));z-index:7;padding:12px 14px;border-radius:18px;background:rgba(20,16,4,.82);border:1px solid rgba(255,210,90,.55);box-shadow:0 0 26px rgba(255,200,80,.18);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);display:flex;align-items:center;gap:12px}
+#arGuideText{flex:1;min-width:0}
+.gd-main{font-size:18px;font-weight:700;color:#ffe08a;line-height:1.35}
+.gd-main.ok{color:#7dffa8}
+#arGuide.locked{border-color:rgba(90,255,140,.7);background:rgba(4,22,12,.85);box-shadow:0 0 26px rgba(60,255,120,.25)}
+.gd-sub{font-size:12.5px;color:#e9dcb8;margin-top:3px}
+#arGuideClear{flex:none;font-size:12.5px;padding:8px 10px}
+#lockFlash{position:fixed;inset:0;pointer-events:none;z-index:40;opacity:0;background:radial-gradient(circle at 50% 50%,rgba(90,255,140,.55),rgba(90,255,140,0) 60%)}
+#lockFlash.go{animation:lockflash .6s ease-out}
+@keyframes lockflash{0%{opacity:0}15%{opacity:1}100%{opacity:0}}
+#toast{position:absolute;left:50%;top:calc(212px + var(--sat));transform:translateX(-50%);padding:10px 16px;border-radius:999px;background:var(--glass2);border:1px solid var(--line);z-index:20;font-size:13.5px;max-width:90vw;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 
 /* Night mode: red filter over everything */
 #redFilter{position:fixed;inset:0;pointer-events:none;z-index:50;display:none;background:#ff1a00;mix-blend-mode:multiply}
@@ -176,3 +187,4 @@ body.night #app{filter:grayscale(1) brightness(.85)}
   #hud{top:calc(60px + var(--sat))}
   #arBar{bottom:calc(8px + var(--sab))}
 }
+@media (max-width:720px){ body.ar #sidebar{bottom:calc(270px + var(--sab))} #arGuide{bottom:calc(140px + var(--sab))} .gd-main{font-size:16.5px} }

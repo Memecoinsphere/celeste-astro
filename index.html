@@ -19,10 +19,10 @@
 
   <header id="topbar">
     <div class="brand"><span class="logo">✦</span><span class="brand-name">Céleste</span></div>
-    <div class="search">
-      <input id="searchInput" type="search" placeholder="Rechercher : Véga, Mars, Orion…" autocomplete="off" spellcheck="false" aria-label="Rechercher un astre">
+    <form class="search" id="searchForm" role="search" action="#" autocomplete="off">
+      <input id="searchInput" type="search" enterkeyhint="search" placeholder="Rechercher : Véga, Mars, Orion…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Rechercher un astre">
       <ul id="searchResults" class="hidden"></ul>
-    </div>
+    </form>
     <button id="locBtn" class="chip" title="Lieu d'observation"><svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span id="locLabel">La Rochelle</span></button>
   </header>
 
@@ -139,6 +139,13 @@
 
   <!-- Pointeur laser : fiche compacte de l'astre visé -->
   <div id="laserPanel" class="hidden" role="button" tabindex="0" aria-live="polite"></div>
+
+  <!-- Guidage vers l'objet recherché (mode caméra) -->
+  <div id="arGuide" class="hidden" aria-live="polite">
+    <div id="arGuideText"></div>
+    <button id="arGuideClear" class="btn">✕ Effacer la cible</button>
+  </div>
+  <div id="lockFlash"></div>
 
   <div id="toast" class="hidden"></div>
 </div>

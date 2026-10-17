@@ -532,7 +532,7 @@ function render() {
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   drawSelection();
-  drawLaser();
+  drawLaser(); drawGuide();
   updateHud();
 }
 function selectedNEU() {
@@ -549,6 +549,11 @@ function drawSelection() {
     const r = 15 + Math.sin(t * 3) * 1.5;
     ctx.strokeStyle = 'rgba(255,214,120,.95)'; ctx.lineWidth = 1.8;
     for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.arc(P.x, P.y, r, k * Math.PI / 2 + 0.25, k * Math.PI / 2 + Math.PI / 2 - 0.25); ctx.stroke(); }
+    if (v[2] < 0 && !AR.on && S.opts.ground) { // objet caché par le sol : fantôme + mention
+      ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(P.x, P.y, 5, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      ctx.font = '600 12px system-ui,sans-serif'; ctx.fillStyle = 'rgba(255,214,120,.95)'; ctx.textAlign = 'center';
+      ctx.fillText(`${objName(S.selected)} — sous l'horizon`, P.x, P.y + r + 16); ctx.textAlign = 'left';
+    }
     return;
   }
   // Flèche vers un objet hors champ
@@ -591,7 +596,7 @@ function renderInfo() {
   if (!s) { card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   const ms = simMs(); let html = '';
-  const upTag = alt => alt > 0 ? '<span class="tag ok">Au-dessus de l\'horizon</span>' : '<span class="tag no">Sous l\'horizon</span>';
+  const upTag = alt => alt > 0 ? '<span class="tag ok">Au-dessus de l\'horizon</span>' : `<span class="tag no">${belowText(s, alt).replace(/^s/, 'S')}</span><br>`;
   if (s.kind === 'star') {
     const i = s.i, n = D.names[SHIP[i]] || ['', '', ''], c = consById[n[2]];
     const { alt, az } = starAltAz(i);
@@ -646,7 +651,7 @@ cv.addEventListener('pointermove', e => {
   if (gesture.kind === 'drag' && pointers.size === 1) {
     gesture.moved += Math.abs(dx) + Math.abs(dy);
     if (AR.on) return;
-    if (gesture.moved > 4) cv.classList.add('dragging');
+    if (gesture.moved > 4) { cv.classList.add('dragging'); LASER.pin = null; }
     S.az -= dx / V.s / Math.max(0.35, Math.cos(S.alt));
     S.alt = clamp(S.alt + dy / V.s, -89.9 * DEG, 89.9 * DEG);
     S.dirty = true; save();
@@ -665,7 +670,7 @@ function endPointer(e) {
 }
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
-cv.addEventListener('wheel', e => { e.preventDefault(); if (AR.on) return; S.fov = clamp(S.fov * Math.exp(e.deltaY * 0.0012), 1 * DEG, 185 * DEG); S.dirty = true; save(); }, { passive: false });
+cv.addEventListener('wheel', e => { e.preventDefault(); if (AR.on) return; LASER.pin = null; S.fov = clamp(S.fov * Math.exp(e.deltaY * 0.0012), 1 * DEG, 185 * DEG); S.dirty = true; save(); }, { passive: false });
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || AR.on) return;
   const st = 5 * DEG * Math.min(1, S.fov / (60 * DEG));
@@ -713,8 +718,9 @@ for (let i = 0; i < NS; i++) {
   INDEX.push({ label: starName(i), sub: `Étoile · mag ${num(SMAG[i], 1)}${c ? ' · ' + c.fr : ''}`, keys, sel: { kind: 'star', i }, rank: 2 + SMAG[i] / 10 });
 }
 const si = $('searchInput'), sr = $('searchResults'); let results = [], selIdx = 0;
+let lastQuery = '';
 function doSearch() {
-  const q = fold(si.value);
+  const q = fold(si.value); lastQuery = q;
   if (!q) { closeSearch(); return; }
   const hits = [];
   for (const it of INDEX) {
@@ -732,13 +738,12 @@ function pickResult(k) {
   const r = results[k]; if (!r) return;
   si.value = r.label; closeSearch(); si.blur();
   updateSky(true);
-  select(r.sel); centerOn(r.sel, r.sel.kind === 'con' ? 80 : 60);
+  goToObject({ ...r.sel });
 }
 si.addEventListener('input', doSearch);
 si.addEventListener('focus', () => { if (si.value) doSearch(); });
 si.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); selIdx = clamp(selIdx + (e.key === 'ArrowDown' ? 1 : -1), 0, results.length - 1); [...sr.children].forEach((li, k) => li.classList.toggle('sel', k === selIdx)); }
-  else if (e.key === 'Enter') { e.preventDefault(); if (!results.length) doSearch(); pickResult(selIdx); }
   else if (e.key === 'Escape') { closeSearch(); si.blur(); }
 });
 sr.addEventListener('pointerdown', e => { const li = e.target.closest('li[data-k]'); if (li) { e.preventDefault(); pickResult(+li.dataset.k); } });
@@ -1017,7 +1022,7 @@ function drawForecastChart() {
 
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
-const laserActive = () => AR.on || S.opts.laser;
+const laserActive = () => AR.on || S.opts.laser || !!LASER.pin;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
 const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
@@ -1039,6 +1044,7 @@ function centreConstellation() {
 function updateLaser(now) {
   if (now - LASER.last < 125) return; // ~8 Hz
   LASER.last = now;
+  if (LASER.pin && !AR.on && S.tween) { LASER.target = LASER.pin; renderLaserPanel(now); return; }
   const R = laserRadiusDeg(); const lim = AR.on ? clamp(effMagLimit(), 3.5, 5) : Math.min(effMagLimit(), 5.5);
   const groundOn = !AR.on && S.opts.ground;
   let best = null, bestScore = 1e9;
@@ -1069,6 +1075,8 @@ function updateLaser(now) {
       if (now - LASER.lostAt < 350) { best = cur; bestScore = c.score; }
     }
   }
+  // Cible de guidage (mode caméra) prioritaire dès qu'elle est dans le rayon
+  if (AR.on && GUIDE.target && GUIDE.target.kind !== 'con') { const gs = laserScore(GUIDE.target, R); if (gs.sep < R) { best = GUIDE.target; bestScore = gs.score; } }
   if (best && !sameSel(best, cur)) LASER.lostAt = 0;
   LASER.target = best; LASER.score = bestScore;
   if (!best) LASER.con = centreConstellation();
@@ -1152,6 +1160,103 @@ function drawLaser() {
   ctx.restore();
 }
 
+/* ---------------- Aller à l'objet recherché / guidage en mode caméra ---------------- */
+const GUIDE = { target: null, locked: false, last: 0, info: null };
+function selNEU(sel) {
+  if (sel.kind === 'star') return [SN[sel.i], SE[sel.i], SU[sel.i]];
+  if (sel.kind === 'body') return sky.bodies[sel.bi].neu;
+  return eqjToNEU(sel.c.v[0], sel.c.v[1], sel.c.v[2], [0, 0, 0]);
+}
+const nextRiseCache = new Map();
+function nextRiseMs(sel) {
+  const ms = simMs();
+  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
+  if (nextRiseCache.has(key)) return nextRiseCache.get(key);
+  let body;
+  if (sel.kind === 'body') body = BODIES[sel.bi].key;
+  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
+  let r = null; try { r = msOf(A.SearchRiseSet(body, observer, +1, A.MakeTime(new Date(ms)), 2)); } catch (e) {}
+  if (nextRiseCache.size > 200) nextRiseCache.clear();
+  nextRiseCache.set(key, r); return r;
+}
+function belowText(sel, alt) {
+  const nr = nextRiseMs(sel);
+  return `sous l'horizon (${fmtDeg(alt, 0)}) · ${nr ? 'prochain lever ' + hmRel(nr, simMs()) : 'ne se lève pas dans les 48 h'}`;
+}
+function goToObject(sel) {
+  if (!sel) return;
+  const { alt, az } = objAltAz(sel);
+  if (AR.on) { setGuideTarget(sel); return; }
+  const key = sel.kind === 'body' ? BODIES[sel.bi].key : '';
+  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : 40;
+  S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(az, S.az * RAD) * DEG, alt1: clamp(alt, -89, 89) * DEG, fov1: fovT * DEG };
+  select(sel);
+  if (sel.kind !== 'con') { LASER.pin = sel; LASER.target = sel; LASER.key = ''; }
+  if (alt < 0) toast(`${objName(sel)} est ${belowText(sel, alt)}`, 7000);
+  else toast(`${objName(sel)} : ${fmtDeg(alt, 0)} au-dessus de l'horizon, ${cardinal(az)}`, 3000);
+}
+function setGuideTarget(sel) {
+  GUIDE.target = sel; GUIDE.locked = false; GUIDE.last = 0;
+  $('arGuide').classList.toggle('hidden', !sel);
+  if (sel) { LASER.target = null; LASER.key = ''; }
+  S.dirty = true;
+}
+function flashLock() {
+  const f = $('lockFlash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+  try { if (navigator.vibrate) navigator.vibrate([70, 50, 70]); } catch (e) {}
+}
+function updateGuide(now) {
+  const g = GUIDE.target; if (!AR.on || !g || !AR.f) return;
+  const v = selNEU(g); const tgt = neuToAltAz(v);
+  const sep = Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD;
+  const vAz = norm360(Math.atan2(V.fE, V.fN) * RAD), vAlt = Math.asin(clamp(V.fU, -1, 1)) * RAD;
+  const dAz = angDiff(tgt.az, vAz), dAlt = tgt.alt - vAlt;
+  const x = v[0] * V.rN + v[1] * V.rE + v[2] * V.rU, y = v[0] * V.uN + v[1] * V.uE + v[2] * V.uU;
+  const R = laserRadiusDeg() * (g.kind === 'con' ? 2.5 : 1);
+  if (!GUIDE.locked && sep < R) { GUIDE.locked = true; flashLock(); if (g.kind !== 'con') { LASER.target = g; LASER.key = ''; } }
+  else if (GUIDE.locked && sep > R * 1.6) GUIDE.locked = false;
+  GUIDE.info = { sep, dAz, dAlt, alt: tgt.alt, az: tgt.az, arrowAng: Math.atan2(-y, x) * RAD, locked: GUIDE.locked };
+  if (now - GUIDE.last < 150) return; GUIDE.last = now;
+  const name = objName(g);
+  let html;
+  if (GUIDE.locked) html = `<div class="gd-main ok">🎯 ${name} est dans le viseur</div><div class="gd-sub">${tgt.alt < 0 ? belowText(g, tgt.alt) + ' — caché par le sol' : 'Touchez la fiche en haut pour tous les détails'}</div>`;
+  else {
+    const parts = [];
+    if (Math.abs(tgt.alt) < 82 && Math.abs(vAlt) < 82 && Math.abs(dAz) > 3) parts.push(`${dAz > 0 ? '→ Tournez à droite' : '← Tournez à gauche'} ${Math.round(Math.abs(dAz))}°`);
+    if (Math.abs(dAlt) > 3) parts.push(`${dAlt > 0 ? '↑ Levez le téléphone' : '↓ Baissez le téléphone'} ${Math.round(Math.abs(dAlt))}°`);
+    if (!parts.length) parts.push('Presque ! Centrez le point laser');
+    html = `<div class="gd-main">${parts.join('<br>')}</div><div class="gd-sub">${name} à ${Math.round(sep)}° du centre${tgt.alt < 0 ? ' · ' + belowText(g, tgt.alt) : ''}</div>`;
+  }
+  $('arGuideText').innerHTML = html; $('arGuide').classList.toggle('locked', GUIDE.locked);
+}
+function drawGuide() {
+  const g = GUIDE.target; if (!AR.on || !g || !GUIDE.info) return;
+  const v = selNEU(g); const t = performance.now() / 1000;
+  const col = GUIDE.locked ? '90,255,140' : '255,210,90';
+  if (proj(v[0], v[1], v[2]) && onScreen(-30)) {
+    const x = P.x, y = P.y, r = 22 + 3 * Math.sin(t * 5);
+    ctx.save(); ctx.strokeStyle = `rgba(${col},.95)`; ctx.lineWidth = 2.5; ctx.shadowColor = `rgb(${col})`; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.stroke();
+    if (!GUIDE.locked) { ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(V.cx, V.cy); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); }
+    ctx.shadowBlur = 0; ctx.fillStyle = `rgba(${col},1)`; ctx.font = '700 14px system-ui,sans-serif'; ctx.textAlign = 'center';
+    if (!GUIDE.locked) ctx.fillText(objName(g), x, y - r - 8);
+    ctx.restore();
+    return;
+  }
+  const ang = GUIDE.info.arrowAng * DEG, c = Math.cos(ang), s = Math.sin(ang);
+  const mx = W / 2 - 50, my = H / 2 - 150;
+  const k = Math.min(Math.abs(mx / (c || 1e-9)), Math.abs(my / (s || 1e-9)));
+  const ax = V.cx + c * k, ay = V.cy + s * k, sc = 1 + 0.08 * Math.sin(t * 6);
+  ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang); ctx.scale(sc, sc);
+  ctx.shadowColor = `rgb(${col})`; ctx.shadowBlur = 18; ctx.fillStyle = `rgba(${col},.97)`;
+  ctx.beginPath(); ctx.moveTo(30, 0); ctx.lineTo(-16, -24); ctx.lineTo(-6, 0); ctx.lineTo(-16, 24); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.font = '700 14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = `rgba(${col},1)`; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.fillText(`${objName(g)} · ${Math.round(GUIDE.info.sep)}°`, ax - c * 56, ay - s * 56 + 5); ctx.restore();
+}
+$('arGuideClear').onclick = () => setGuideTarget(null);
+$('searchForm').addEventListener('submit', e => { e.preventDefault(); if (!results.length || fold(si.value) !== lastQuery) doSearch(); pickResult(selIdx || 0); });
+
 /* ---------------- Mode caméra (réalité augmentée) ---------------- */
 const AR = { on: false, camera: false, stream: null, f: null, u: null, basis: null, raw: null, offset: null, absolute: false, fov: 66, userHead: 0, gotEvent: false, evName: null, camMsg: '' };
 const arMsg = m => { $('arMsg').textContent = m || ''; };
@@ -1217,7 +1322,9 @@ function startAR() {
     try { camP = navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).catch(err => err); } catch (e) { camP = Promise.resolve(e); }
   }
   AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.camMsg = '';
-  document.body.classList.add('ar'); $('arBar').classList.remove('hidden'); $('arBtn').classList.add('on');
+  const carry = LASER.pin || (S.selected && S.selected.kind !== 'con' ? S.selected : null); LASER.pin = null;
+  document.body.classList.add('ar'); $('arBar').classList.remove('hidden');
+  if (carry) setGuideTarget({ ...carry }); $('arBtn').classList.add('on');
   PANELS.forEach(n => $('panel-' + n).classList.add('hidden'));
   arMsg(window.isSecureContext ? 'Initialisation des capteurs…' : '⚠ Page non sécurisée (file:// ou http) : l\'iPhone bloque caméra et capteurs hors HTTPS. Ouvrez la version HTTPS de l\'application.');
   AR.evName = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
@@ -1252,7 +1359,7 @@ function stopAR() {
   if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; }
   const v = $('camera'); v.srcObject = null; v.classList.remove('on');
   window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient);
-  LASER.target = null; LASER.key = '';
+  LASER.target = null; LASER.key = ''; setGuideTarget(null);
   document.body.classList.remove('ar'); $('arBar').classList.add('hidden'); $('arBtn').classList.remove('on'); arMsg('');
   S.dirty = true;
 }
@@ -1275,7 +1382,7 @@ function frame(now) {
   }
   if (AR.on) { updateAR(now); S.dirty = true; }
   const changed = updateSky(false);
-  if (laserActive()) { setupView(); updateLaser(now); S.dirty = true; } else if (LASER.key) { LASER.key = ''; LASER.target = null; renderLaserPanel(now); }
+  if (laserActive()) { setupView(); if (AR.on) updateGuide(now); updateLaser(now); S.dirty = true; } else if (LASER.key) { LASER.key = ''; LASER.target = null; renderLaserPanel(now); }
   if (changed || S.dirty || S.selected) { render(); S.dirty = false; }
   updateClock();
   if (S.selected && changed && now - lastInfo > (S.playing ? 300 : 1000)) { lastInfo = now; renderInfo(); }
@@ -1293,6 +1400,7 @@ window.__celeste = {
   bodyAltAz() { updateSky(true); return sky.bodies.map(b => ({ key: b.b.key, alt: b.alt, az: b.az, mag: b.mag })); },
   starAltAzByName(name) { const it = INDEX.find(x => x.label === name && x.sel.kind === 'star'); return it ? starAltAz(it.sel.i) : null; },
   project(alt, az) { const v = altAzVec(alt, az); return proj(v[0], v[1], v[2]) ? { x: P.x, y: P.y } : null; },
+  guide: () => ({ target: GUIDE.target && objName(GUIDE.target), ...GUIDE.info, text: $('arGuideText').innerText }),
   laser: () => ({ target: LASER.target && objName(LASER.target), kind: LASER.target && LASER.target.kind, radius: laserRadiusDeg(), html: $('laserPanel').innerText }),
   aimAltAz(alt, az) { S.az = az * DEG; S.alt = alt * DEG; S.dirty = true; },
   simMs, search(q) { si.value = q; doSearch(); pickResult(0); }
