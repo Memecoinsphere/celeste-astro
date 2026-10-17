@@ -663,7 +663,7 @@ function render() {
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   drawSelection();
-  drawLaser(); drawGuide();
+  drawLaser(); drawGuide(); drawCalReticle();
   updateHud();
 }
 function selectedNEU() {
@@ -1769,6 +1769,7 @@ function onOrient(e) {
   AR.gotEvent = true;
   const raw = { alpha: e.alpha || 0, beta: e.beta || 0, gamma: e.gamma || 0 };
   AR.raw = raw;
+  if (NG.on || NG.rrOk <= 3) { const ax = deviceAxes(raw.alpha, raw.beta, raw.gamma); ngSample(ax.X, ax.Y, ax.Z); }
   if (typeof e.webkitCompassHeading === 'number' && isFinite(e.webkitCompassHeading)) {
     // iOS : alpha est relatif. Le cap boussole (corrigé de l'inclinaison) correspond au haut de l'appareil
     // posé à plat, ou à l'axe de la caméra arrière tenu verticalement : on en déduit un décalage lissé.
@@ -1788,7 +1789,6 @@ function setRelative(on) {
   AR.relative = on; const h = $('arHead');
   h.min = on ? -180 : -30; h.max = on ? 180 : 30;
   if (!on) { AR.userHead = clamp(AR.userHead, -30, 30); h.value = AR.userHead; $('arHeadVal').textContent = (AR.userHead > 0 ? '+' : '') + AR.userHead + '°'; }
-  $('arCalib').classList.toggle('hidden', !on);
 }
 function calibrate() {
   if (!AR.f) return;
@@ -1801,21 +1801,273 @@ function calibrate() {
 }
 const vnorm = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+/* ---------------- Téléphones sans gyroscope (ex. Galaxy A15) : détection, fusion accéléromètre + boussole ----------------
+   Sans gyroscope, Chrome calcule l'orientation avec l'accéléromètre et le magnétomètre seuls : elle tremble et saute.
+   Repli : vecteur gravité (devicemotion) → inclinaison, nord magnétique de l'événement d'orientation → cap, chacun filtré
+   par un passe-bas adaptatif (fort à l'arrêt, rapide en mouvement), indépendant de la cadence, avec zone morte
+   et rejet des pics magnétiques. Les téléphones avec gyroscope gardent exactement le comportement précédent. */
+const NG = { mode: 'auto', on: false, why: '', motionN: 0, rrOk: 0, rrNull: 0, sign: 0, votes: 0,
+  acc: { n: [0, 0, 0], u: [0, 0, 0], k: 0, g: [0, 0, 0], gk: 0, gmag: 0, lin: 0, linK: 0 },
+  lastN: null, lastU: null, lastG: null, lastGt: 0, uf: null, nf: null, spikeT: 0, noiseH: 1, noiseT: 0.4, motion: 0,
+  jit: { c1: null, c2: null, ms: 0, n: 0, flag: false }, stats: { rejected: 0, frames: 0 } };
+try { const m = localStorage.getItem('celeste.nogyro'); if (m === 'on' || m === 'off') NG.mode = m; } catch (e) {}
+const vdot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vang = (a, b) => Math.acos(clamp(vdot(a, b), -1, 1)) * RAD;
+const vperp = (v, u) => { const d = vdot(v, u); return vnorm([v[0] - d * u[0], v[1] - d * u[1], v[2] - d * u[2]]); };
+function vrot(v, ax, a) { const c = Math.cos(a), s = Math.sin(a), x = vcross(ax, v), d = vdot(ax, v) * (1 - c); return [v[0] * c + x[0] * s + ax[0] * d, v[1] * c + x[1] * s + ax[1] * d, v[2] * c + x[2] * s + ax[2] * d]; }
+function onMotion(e) {
+  if (!AR.on || AR.paused) return;
+  NG.motionN++;
+  const rr = e.rotationRate;
+  if (rr && (rr.alpha != null || rr.beta != null || rr.gamma != null)) NG.rrOk++; else NG.rrNull++;
+  const a = e.accelerationIncludingGravity, A_ = NG.acc;
+  if (a && a.x != null && isFinite(a.x)) { A_.g[0] += a.x; A_.g[1] += a.y; A_.g[2] += a.z; A_.gk++; A_.gmag += Math.hypot(a.x, a.y, a.z); }
+  const l = e.acceleration; if (l && l.x != null && isFinite(l.x)) { A_.lin += Math.hypot(l.x, l.y, l.z); A_.linK++; }
+  if (NG.motionN < 40 || NG.motionN % 20 === 0) ngDetect();
+}
+function ngDetect() {
+  let on = false, why = '';
+  if (NG.mode === 'on') { on = true; why = 'forcé'; }
+  else if (NG.mode === 'off') on = false;
+  else if (NG.rrOk > 3) on = false; // gyroscope présent : comportement inchangé
+  else if (NG.rrNull >= 10) { on = true; why = 'gyroscope absent (rotationRate indisponible)'; }
+  else if (NG.jit.flag) { on = true; why = 'orientation très bruitée'; }
+  if (on !== NG.on) { NG.on = on; NG.why = why; NG.uf = NG.nf = null; syncNgUI(); }
+}
+function ngSample(X, Y, Z) { // appelé par onOrient : accumule nord et verticale dans le repère de l'appareil
+  const A_ = NG.acc, n = [X[1], Y[1], Z[1]], u = [X[2], Y[2], Z[2]];
+  A_.n[0] += n[0]; A_.n[1] += n[1]; A_.n[2] += n[2]; A_.u[0] += u[0]; A_.u[1] += u[1]; A_.u[2] += u[2]; A_.k++;
+  // détection du bruit (téléphones sans devicemotion exploitable) : dérivée seconde de l'axe caméra
+  const J = NG.jit, c = [-Z[0], -Z[1], -Z[2]];
+  if (J.c1 && J.c2) { const d2 = Math.hypot(c[0] - 2 * J.c1[0] + J.c2[0], c[1] - 2 * J.c1[1] + J.c2[1], c[2] - 2 * J.c1[2] + J.c2[2]) * RAD; const dc = Math.min(d2, 4); J.ms += (dc * dc - J.ms) * 0.03; J.n++; if (J.n > 90 && !J.flag && NG.rrOk === 0 && Math.sqrt(J.ms) > 1.6) { J.flag = true; ngDetect(); } }
+  J.c2 = J.c1; J.c1 = c;
+}
+function ngFuse(dt, now) {
+  const A_ = NG.acc;
+  if (A_.k) { NG.lastN = vnorm(A_.n); NG.lastU = vnorm(A_.u); }
+  let gErr = 0;
+  if (A_.gk && NG.lastU) {
+    const g = vnorm(A_.g); const dd = vdot(g, NG.lastU); // signe d'accelerationIncludingGravity (inversé sur certains navigateurs)
+    if (Math.abs(dd) > 0.6) { NG.votes = clamp(NG.votes + (dd > 0 ? 1 : -1), -20, 20); if (Math.abs(NG.votes) > 4) NG.sign = NG.votes > 0 ? 1 : -1; }
+    if (NG.sign) { NG.lastG = g.map(x => x * NG.sign); NG.lastGt = now; gErr = Math.abs(A_.gmag / A_.gk - 9.81); }
+  }
+  const lin = A_.linK ? A_.lin / A_.linK : gErr;
+  NG.motion += (lin - NG.motion) * (1 - Math.exp(-dt / 0.15));
+  A_.n = [0, 0, 0]; A_.u = [0, 0, 0]; A_.k = 0; A_.g = [0, 0, 0]; A_.gk = 0; A_.gmag = 0; A_.lin = 0; A_.linK = 0;
+  if (!NG.lastN) return null;
+  const u = NG.lastG && now - NG.lastGt < 400 ? NG.lastG : NG.lastU, n = NG.lastN;
+  NG.stats.frames++;
+  if (!NG.uf) { NG.uf = u; NG.nf = vperp(n, u); return ngAxes(); }
+  const mv = clamp((NG.motion - 0.3) / 1.2, 0, 1); // 0 = immobile, 1 = en mouvement franc
+  // inclinaison (gravité)
+  const eT = vang(NG.uf, u);
+  const sT = Math.max(mv, clamp((eT - 2.5 * NG.noiseT) / 5, 0, 1));
+  let tauT = lerp(0.45, 0.05, sT); if (gErr > 1.5) tauT *= 3; // accélération forte : la gravité est peu fiable
+  const kT = 1 - Math.exp(-dt / tauT), dbT = 0.12, kS = 1 - Math.exp(-dt / 2.5);
+  // zone morte « douce » : sous le seuil, convergence très lente (pas de tremblement, pas d'erreur résiduelle)
+  const stT = eT > dbT ? (eT - dbT) * kT + dbT * kS : eT * kS;
+  if (eT > 1e-4) NG.uf = vnorm(NG.uf.map((x, i) => x + (u[i] - x) * Math.min(1, stT / eT)));
+  if (sT < 0.2) NG.noiseT = clamp(NG.noiseT + (eT - NG.noiseT) * (1 - Math.exp(-dt / 2)), 0.15, 3);
+  // cap : écart signé autour de la verticale filtrée (atan2 → pas de saut 0°/360°)
+  const nf = vperp(NG.nf, NG.uf), nr = vperp(n, NG.uf);
+  let d = Math.atan2(vdot(vcross(nf, nr), NG.uf), vdot(nf, nr)) * RAD;
+  // pic magnétique probable : grand écart de cap soudain alors que le téléphone ne bouge pas (inclinaison stable, pas d'accélération)
+  if (eT > Math.max(3, 3 * NG.noiseT) || mv > 0.5) NG.tiltT = now; // le téléphone bouge : un grand écart de cap est alors attendu
+  if (!NG.spikeT && now - (NG.spikeEnd || 0) > 1000 && now - (NG.tiltT || 0) > 400 && Math.abs(d) > Math.max(10, 6 * NG.noiseH)) NG.spikeT = now;
+  if (NG.spikeT) {
+    if (Math.abs(d) < 6) NG.spikeT = 0;
+    else if (now - NG.spikeT < 500) { d = 0; NG.stats.rejected++; }
+    else { NG.spikeT = 0; NG.spikeEnd = now; } // l'écart persiste : c'est une vraie rotation, on l'accepte (sans re-bloquer aussitôt)
+  }
+  const ad = Math.abs(d);
+  const sH = Math.max(mv, clamp((ad - 2.2 * NG.noiseH) / 8, 0, 1));
+  const kH = 1 - Math.exp(-dt / lerp(0.6, 0.07, sH)), dbH = 0.3;
+  // terme intégral (fuyant) : estime la vitesse d'un panoramique régulier et en supprime le retard
+  const stH = (ad > dbH ? (ad - dbH) * kH + dbH * kS : ad * kS) * Math.sign(d);
+  if (!NG.spikeT && ad < 6) NG.w = clamp((NG.w || 0) + 0.7 * d * dt, -30, 30);
+  NG.w *= Math.exp(-dt / (d * NG.w < 0 ? 0.3 : 3)); // fuite ; freinage en cas de dépassement
+  NG.nf = vrot(nf, NG.uf, (stH + NG.w * dt) * DEG);
+  if (sH < 0.2 && !NG.spikeT) NG.noiseH = clamp(NG.noiseH + (ad - NG.noiseH) * (1 - Math.exp(-dt / 2)), 0.3, 4);
+  return ngAxes();
+}
+function ngAxes() { // axes de l'appareil dans le repère terrestre (Est, Nord, Haut) à partir de la verticale et du nord filtrés
+  const U = NG.uf, N = NG.nf, E = vcross(N, U);
+  return { X: [E[0], N[0], U[0]], Y: [E[1], N[1], U[1]], Z: [E[2], N[2], U[2]] };
+}
+function setNgMode(m) { NG.mode = m; try { localStorage.setItem('celeste.nogyro', m); } catch (e) {} ngDetect(); syncNgUI(); renderNgTips(); }
+function syncNgUI() {
+  const b = $('ngBadge'); if (!b) return;
+  b.classList.toggle('hidden', !(AR.on && NG.on));
+  if (AR.on && NG.on && !CAL.active) arMsg('Mode sans gyroscope : mouvements lissés. Faites un « 8 » avec le téléphone, puis « Calibrer » sur une étoile.');
+}
+function renderNgTips() {
+  const el = $('ngTips'); if (!el || el.classList.contains('hidden')) return;
+  el.querySelector('.ng-why').textContent = NG.on ? `Détecté : ${NG.why}.` : (NG.rrOk > 3 ? 'Gyroscope détecté : stabilisation normale.' : 'Gyroscope non détecté pour l\'instant.');
+  el.querySelectorAll('[data-ngm]').forEach(x => x.classList.toggle('on', x.dataset.ngm === NG.mode));
+}
+
+/* ---------------- Calibrage sur une étoile (1 ou 2 astres) ----------------
+   Modèle : décalage d'azimut (boussole) + inclinaison de l'appareil (biais de l'accéléromètre : tangage px, lacet py autour de l'axe vertical de l'écran).
+   1 astre → azimut + hauteur ; 2 astres → moindres carrés (azimut, tangage, inclinaison latérale) et erreur résiduelle. Sauvegardé sur l'appareil. */
+const CALS = { az: 0, px: 0, py: 0, n: 0, res: null, date: 0, abs: true, names: [], session: false };
+let CALQ = null;
+try { const c = JSON.parse(localStorage.getItem('celeste.calib') || 'null'); if (c && isFinite(c.az) && isFinite(c.px) && isFinite(c.py)) Object.assign(CALS, c, { session: false }); } catch (e) {}
+const CAL = { active: false, target: null, pts: [], collect: null, done: false, prevGuide: null, msg: '' };
+function calMatrix(px, py) { // Rx(px)·Ry(py), repère de l'appareil
+  const a = px * DEG, b = py * DEG, ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+  const Rx = [[1, 0, 0], [0, ca, -sa], [0, sa, ca]], Ry = [[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]];
+  return Rx.map(r => [0, 1, 2].map(j => r[0] * Ry[0][j] + r[1] * Ry[1][j] + r[2] * Ry[2][j]));
+}
+function calRefresh() { CALQ = (CALS.px || CALS.py) ? calMatrix(CALS.px, CALS.py) : null; }
+calRefresh();
+function calApplyAxes(X, Y, Z, Q) { if (!Q) return { X, Y, Z }; const col = j => [0, 1, 2].map(k => Q[0][j] * X[k] + Q[1][j] * Y[k] + Q[2][j] * Z[k]); return { X: col(0), Y: col(1), Z: col(2) }; }
+const calAzActive = () => (CALS.n || CALS.session || CALS.north) && (CALS.abs ? AR.absolute : CALS.session) ? CALS.az : 0;
+function calCamDir(ax, p) { // direction de l'axe caméra (NEU) prédite pour les axes mesurés et les paramètres p
+  const Q = calMatrix(p.px, p.py), q = [-Q[0][2], -Q[1][2], -Q[2][2]];
+  const X = ax[0], Y = ax[1], Z = ax[2], v = [0, 1, 2].map(k => q[0] * X[k] + q[1] * Y[k] + q[2] * Z[k]);
+  const d = ((AR.offset || 0) + p.az) * DEG, cd = Math.cos(d), sd = Math.sin(d), N = v[1], E = v[0];
+  return vnorm([N * cd - E * sd, N * sd + E * cd, v[2]]);
+}
+function calSolve(pts) {
+  const az0 = angDiff(neuToAltAz(pts[0].t).az, neuToAltAz(calCamDir(pts[0].ax, { az: 0, px: 0, py: 0 })).az);
+  let p = [az0, 0, 0]; const np = pts.length >= 2 ? 3 : 2, lam = 0.05;
+  const resid = q => { const P = { az: q[0], px: q[1], py: np === 3 ? q[2] : 0 }, r = []; for (const s of pts) { const c = calCamDir(s.ax, P); r.push((c[0] - s.t[0]) * RAD, (c[1] - s.t[1]) * RAD, (c[2] - s.t[2]) * RAD); } if (np === 3) r.push(Math.sqrt(lam) * q[2]); return r; };
+  for (let it = 0; it < 8; it++) { // Gauss-Newton, jacobien numérique
+    const r0 = resid(p), J = [];
+    for (let j = 0; j < np; j++) { const q = p.slice(); q[j] += 0.01; const r1 = resid(q); J.push(r1.map((x, i) => (x - r0[i]) / 0.01)); }
+    const A2 = [], b = [];
+    for (let i = 0; i < np; i++) { A2.push([]); for (let j = 0; j < np; j++) A2[i].push(J[i].reduce((s, x, k) => s + x * J[j][k], 0) + (i === j ? 1e-9 : 0)); b.push(-J[i].reduce((s, x, k) => s + x * r0[k], 0)); }
+    const dx = solveLin(A2, b); if (!dx) break;
+    for (let j = 0; j < np; j++) p[j] += dx[j];
+    if (Math.hypot(...dx) < 1e-4) break;
+  }
+  const P = { az: norm360(p[0] + 180) - 180, px: p[1], py: np === 3 ? p[2] : 0 };
+  const errs = pts.map(s => vang(calCamDir(s.ax, P), s.t));
+  return { ...P, errs, rms: Math.sqrt(errs.reduce((s, e) => s + e * e, 0) / errs.length) };
+}
+function solveLin(A, b) { // élimination de Gauss (2×2 ou 3×3)
+  const n = b.length, M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let piv = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (Math.abs(M[piv][c]) < 1e-12) return null; [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+  }
+  return M.map((r, i) => r[n] / r[i]);
+}
+function calSuggest() { // 3 à 5 astres brillants bien placés (Lune, planètes, étoiles), loin du 1er astre déjà utilisé
+  const first = CAL.pts.length ? CAL.pts[0].t : null, out = [];
+  const add = (sel, name, mag, v, kind) => {
+    const aa = neuToAltAz(v); if (aa.alt < 10 || aa.alt > 80) return;
+    const sep = first ? vang(v, first) : 90; if (first && sep < 30) return;
+    out.push({ sel, name, mag, alt: aa.alt, az: aa.az, kind, score: mag + (aa.alt < 18 ? 1.2 : 0) + (aa.alt > 70 ? 0.8 : 0) - (first ? Math.min(sep, 90) / 60 : 0) });
+  };
+  sky.bodies.forEach((bs, bi) => { if (bs.b.key === 'Sun') return; if (bs.b.key === 'Moon' || (bs.mag != null && bs.mag < 1.8)) add({ kind: 'body', bi }, bs.b.fr, bs.mag == null ? -3 : bs.mag, bs.neu, bs.b.key === 'Moon' ? 'Lune' : 'planète'); });
+  for (let i = 0; i < NS && SMAG[i] < 1.9; i++) add({ kind: 'star', i }, starName(i), SMAG[i], [SN[i], SE[i], SU[i]], 'étoile');
+  return out.sort((a, b) => a.score - b.score).slice(0, 5);
+}
+function openCalSheet() {
+  const el = $('calSheet'); el.classList.remove('hidden'); $('ngTips').classList.add('hidden'); renderCalSheet();
+}
+function calInfoText() {
+  if (!CALS.n && !CALS.north) return 'Aucun calibrage enregistré.';
+  const f = v => (v > 0 ? '+' : '') + num(v, 1) + '°';
+  return `${CALS.n ? `Calibré sur ${CALS.names.join(' et ')}` : 'Cap calé sur le Nord'} : azimut ${f(CALS.az)}, hauteur ${f(CALS.px)}${CALS.n >= 2 ? `, inclinaison ${f(CALS.py)}` : ''}${CALS.res != null && CALS.n >= 2 ? ` · erreur résiduelle ${num(CALS.res, 2)}°` : ''}${CALS.abs ? '' : ' (sans boussole : à refaire à chaque séance)'}.`;
+}
+function renderCalSheet() {
+  const el = $('calList'); if (!el) return;
+  const sug = calSuggest(), g = GUIDE.target && GUIDE.target.kind !== 'con' && !CAL.active ? GUIDE.target : null;
+  CAL.sug = sug;
+  el.innerHTML = `<p class="muted">${CAL.pts.length ? 'Choisissez un 2<sup>e</sup> astre, éloigné du premier :' : 'Choisissez un astre bien visible, puis centrez-le dans le cercle :'}</p>
+  <ul class="plist cal-list">${g ? `<li data-cg="1"><span class="mes-g">🎯</span><div><div class="pname">${objName(g)}</div><div class="pmeta">cible actuelle (recherche)</div></div></li>` : ''}${sug.map((s, k) => `<li data-cs="${k}"><span class="mes-g">${s.kind === 'Lune' ? '☾' : s.kind === 'planète' ? '●' : '✦'}</span><div><div class="pname">${s.name}</div><div class="pmeta">${s.kind} · mag ${num(s.mag, 1)}</div></div><div class="pright"><b>${fmtDeg(s.alt, 0)}</b><br><span class="muted">${cardinal(s.az)}</span></div></li>`).join('') || '<li class="muted">Aucun astre brillant assez haut pour l\'instant.</li>'}</ul>
+  <p class="fine">Autre astre : fermez, cherchez-le (loupe), puis revenez ici : il apparaît en tête de liste.</p>
+  <div class="cal-actions"><button class="btn" data-cn="1" type="button">Sans étoile : je vise le Nord</button><button class="btn" data-cr="1" type="button">Réinitialiser</button></div>
+  <div class="fine cal-state">${calInfoText()}</div>`;
+  el.querySelectorAll('[data-cs]').forEach(li => li.onclick = () => calBegin(sug[+li.dataset.cs].sel));
+  el.querySelectorAll('[data-cg]').forEach(li => li.onclick = () => calBegin({ ...g }));
+  el.querySelector('[data-cn]').onclick = () => { $('calSheet').classList.add('hidden'); calibrate(); };
+  el.querySelector('[data-cr]').onclick = () => { calReset(); renderCalSheet(); };
+}
+function calBegin(sel) {
+  if (!CAL.active) CAL.prevGuide = GUIDE.target ? { ...GUIDE.target } : null;
+  CAL.active = true; CAL.target = sel; CAL.done = false; CAL.collect = null;
+  $('calSheet').classList.add('hidden'); document.body.classList.add('cal');
+  setGuideTarget(null); renderCalBar(); S.dirty = true;
+}
+function renderCalBar() {
+  const el = $('calBar'); el.classList.toggle('hidden', !CAL.active); if (!CAL.active) return;
+  const name = CAL.target ? objName(CAL.target) : '';
+  if (CAL.done) {
+    el.innerHTML = `<div class="cal-t">✅ ${CAL.msg}</div><div class="cal-b">${CAL.pts.length < 2 ? '<button class="btn" id="calMore" type="button">Ajouter une 2<sup>e</sup> étoile</button>' : ''}<button class="btn accent" id="calEnd" type="button">Terminer</button></div>`;
+    if ($('calMore')) $('calMore').onclick = () => { CAL.done = false; CAL.active = true; openCalSheet(); };
+    $('calEnd').onclick = calEnd;
+  } else {
+    el.innerHTML = `<div class="cal-t">${CAL.pts.length ? '2<sup>e</sup> astre : ' : ''}Visez la <b>vraie ${name}</b> (dans le ciel ou sur l'image de la caméra) et placez-la au centre du cercle. Tenez immobile, puis « Valider ».</div><div class="cal-s">Le repère dessiné peut être décalé : c'est justement ce que l'on corrige.</div><div class="cal-b"><button class="btn" id="calCancel" type="button">Annuler</button><button class="btn accent" id="calOk" type="button"${CAL.collect ? ' disabled' : ''}>${CAL.collect ? 'Mesure…' : 'Valider'}</button></div>`;
+    $('calOk').onclick = () => { if (!AR.axes) { toast('Capteurs pas encore prêts'); return; } CAL.collect = { until: performance.now() + 800, s: [[0, 0, 0], [0, 0, 0], [0, 0, 0]], k: 0 }; renderCalBar(); };
+    $('calCancel').onclick = calEnd;
+  }
+}
+function calCollect(ax, now) {
+  const C = CAL.collect; for (let a = 0; a < 3; a++) for (let k = 0; k < 3; k++) C.s[a][k] += ax[a][k]; C.k++;
+  const cz = [-ax[2][0], -ax[2][1], -ax[2][2]]; if (!C.c0) C.c0 = cz; else C.spread = Math.max(C.spread || 0, vang(C.c0, cz));
+  if (now < C.until) return;
+  CAL.collect = null;
+  if ((C.spread || 0) > 2.5) { toast('Le téléphone a bougé pendant la mesure : tenez-le immobile et validez à nouveau.', 4000); renderCalBar(); return; }
+  // axes moyennés et ré-orthonormés
+  const Y = vnorm(C.s[1]), Z0 = vnorm(C.s[2]), X = vnorm(vcross(Y, Z0)), Z = vcross(X, Y);
+  CAL.pts.push({ ax: [X, Y, Z], t: selNEU(CAL.target).slice(), name: objName(CAL.target) });
+  let r = calSolve(CAL.pts);
+  if (CAL.pts.length >= 2 && (r.rms > 3 || Math.abs(r.py) > 12 || Math.abs(r.px) > 15)) { // mesures incohérentes : on garde le calibrage à 1 étoile
+    CAL.pts.pop(); r = calSolve(CAL.pts);
+    toast('Les deux mesures ne concordent pas (perturbation magnétique ?) : calibrage sur une seule étoile conservé. Réessayez plus loin du métal.', 6000);
+  }
+  Object.assign(CALS, { az: r.az, px: r.px, py: r.py, n: CAL.pts.length, res: r.rms, date: Date.now(), abs: !!AR.absolute, names: CAL.pts.map(p => p.name), session: true, north: false, errs: r.errs });
+  AR.userHead = 0; $('arHead').value = 0; $('arHeadVal').textContent = '0°';
+  calRefresh(); calSave(); AR.f = null; AR.u = null; S.dirty = true;
+  const f = v => (v > 0 ? '+' : '') + num(v, 1) + '°';
+  CAL.msg = CAL.pts.length < 2 ? `Calibré sur ${CAL.pts[0].name} : azimut ${f(r.az)}, hauteur ${f(r.px)}. Une 2<sup>e</sup> étoile améliore et vérifie le réglage.` : `Calibré sur ${CALS.names.join(' et ')} : azimut ${f(r.az)}, hauteur ${f(r.px)}, inclinaison ${f(r.py)} · erreur résiduelle <b>${num(r.rms, 2)}°</b>${r.rms > 2 ? ' (élevée : refaites le calibrage, loin des objets métalliques)' : ''}.`;
+  CAL.done = true; renderCalBar();
+}
+function calEnd() {
+  CAL.active = false; CAL.done = false; CAL.collect = null; CAL.pts = []; document.body.classList.remove('cal');
+  setGuideTarget(CAL.prevGuide); CAL.prevGuide = null; renderCalBar(); syncNgUI();
+}
+function calSave() { try { const { session, ...c } = CALS; localStorage.setItem('celeste.calib', JSON.stringify(c)); } catch (e) {} }
+function calReset() {
+  Object.assign(CALS, { az: 0, px: 0, py: 0, n: 0, res: null, date: 0, abs: true, names: [], session: false, north: false, errs: null });
+  try { localStorage.removeItem('celeste.calib'); } catch (e) {}
+  AR.userHead = 0; $('arHead').value = 0; $('arHeadVal').textContent = '0°'; calRefresh(); AR.f = null; AR.u = null; S.dirty = true;
+  toast('Calibrage réinitialisé', 2500);
+}
+function drawCalReticle() {
+  if (!AR.on || !CAL.active || CAL.done) return;
+  if (CAL.target) { const v = selNEU(CAL.target); if (proj(v[0], v[1], v[2]) && onScreen(-20)) { // repère (non calibré) de l'astre choisi
+    ctx.save(); ctx.strokeStyle = 'rgba(255,230,120,.6)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(P.x, P.y, 15, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,230,120,.85)'; ctx.font = '600 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(objName(CAL.target) + ' (repère)', P.x, P.y - 22); ctx.restore(); } }
+  const x = V.cx, y = V.cy, r = 26;
+  ctx.save(); ctx.strokeStyle = 'rgba(255,230,120,.95)'; ctx.lineWidth = 2; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - r - 12, y); ctx.lineTo(x - 8, y); ctx.moveTo(x + 8, y); ctx.lineTo(x + r + 12, y); ctx.moveTo(x, y - r - 12); ctx.lineTo(x, y - 8); ctx.moveTo(x, y + 8); ctx.lineTo(x, y + r + 12); ctx.stroke();
+  ctx.restore();
+}
+
 let arLast = 0;
 function updateAR(now) {
   if (!AR.on || !AR.raw) return;
-  const { X, Y, Z } = deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma);
+  const dt = Math.min(0.2, (now - (arLast || now)) / 1000); arLast = now;
+  const ax0 = NG.on ? (ngFuse(dt, now) || deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma)) : deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma);
+  AR.axes = [ax0.X, ax0.Y, ax0.Z];
+  if (CAL.collect) calCollect(AR.axes, now);
+  const { X, Y, Z } = calApplyAxes(ax0.X, ax0.Y, ax0.Z, CALQ); // calibrage sur étoile : inclinaison de l'appareil
   let ang = 0;
   if (screen.orientation && typeof screen.orientation.angle === 'number') ang = screen.orientation.angle;
   else if (typeof window.orientation === 'number') ang = window.orientation;
   const th = ang * DEG, ct = Math.cos(th), st = Math.sin(th);
   const upE = [ct * Y[0] + st * X[0], ct * Y[1] + st * X[1], ct * Y[2] + st * X[2]]; // haut de l'écran
   const fE = [-Z[0], -Z[1], -Z[2]]; // axe de la caméra arrière
-  const d = ((AR.offset || 0) + AR.userHead) * DEG, cd = Math.cos(d), sd = Math.sin(d);
+  const d = ((AR.offset || 0) + AR.userHead + calAzActive()) * DEG, cd = Math.cos(d), sd = Math.sin(d);
   const toNEU = v => { const N = v[1], E = v[0]; return [N * cd - E * sd, N * sd + E * cd, v[2]]; };
   const f = toNEU(fE), u = toNEU(upE);
-  const dt = Math.min(0.2, (now - (arLast || now)) / 1000); arLast = now;
-  const k = AR.f ? 1 - Math.exp(-dt / 0.09) : 1; // lissage exponentiel (~90 ms)
+  const k = AR.f && !NG.on ? 1 - Math.exp(-dt / 0.09) : 1; // lissage exponentiel (~90 ms) ; sans gyroscope : déjà filtré
   AR.f = vnorm(AR.f ? AR.f.map((x, i) => lerp(x, f[i], k)) : f);
   AR.u = vnorm(AR.u ? AR.u.map((x, i) => lerp(x, u[i], k)) : u);
   const r = vnorm(vcross(AR.u, AR.f)); const uu = vcross(AR.f, r);
@@ -1850,6 +2102,8 @@ function startAR() {
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     camP = openCamera();
   }
+  Object.assign(NG, { on: false, why: '', motionN: 0, rrOk: 0, rrNull: 0, sign: 0, votes: 0, uf: null, nf: null, w: 0, lastN: null, lastU: null, lastG: null, spikeT: 0, noiseH: 1, noiseT: 0.4, motion: 0 }); NG.jit = { c1: null, c2: null, ms: 0, n: 0, flag: false }; NG.stats = { rejected: 0, frames: 0 };
+  CALS.session = false; AR.axes = null;
   AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.camMsg = ''; AR.lastAbs = 0; AR.paused = false; AR.wantCam = false; setRelative(false);
   const carry = LASER.pin || (S.selected && S.selected.kind !== 'con' ? S.selected : null); LASER.pin = null;
   document.body.classList.add('ar'); $('arBar').classList.remove('hidden');
@@ -1865,7 +2119,8 @@ function startAR() {
       if (!AR.on) return;
       if (!AR.gotEvent) arFail('Capteurs d\'orientation indisponibles : le mode caméra nécessite un téléphone ou une tablette avec gyroscope et boussole' + (window.isSecureContext ? '.' : ', ouvert en HTTPS.'));
       else if (!AR.absolute) { setRelative(true); arMsg(GUIDE.target ? `Boussole indisponible (orientation relative). Visez ${objName(GUIDE.target)} puis touchez « Calibrer », ou ajustez « Cap ».` : 'Boussole indisponible (orientation relative) : pointez le Nord puis touchez « Calibrer », ou ajustez « Cap » sur une étoile connue.'); }
-      else arMsg(AR.camera ? 'Pointez le téléphone vers le ciel. Ajustez « Champ » et « Cap » si le ciel est décalé.' : (AR.camMsg || 'Mode gyroscope seul.'));
+      else arMsg(AR.camera ? 'Pointez le téléphone vers le ciel. Si le ciel est décalé : « Calibrer » sur une étoile.' : (AR.camMsg || 'Mode gyroscope seul.'));
+      if (NG.on) syncNgUI();
     }, 2500);
   });
   camP.then(res => {
@@ -1887,6 +2142,7 @@ function stopAR() {
   if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; }
   const v = $('camera'); v.srcObject = null; v.classList.remove('on');
   removeOrientListeners(); AR.wantCam = false; AR.paused = false; setRelative(false);
+  if (CAL.active) calEnd(); $('calSheet').classList.add('hidden'); $('ngTips').classList.add('hidden'); NG.on = false; syncNgUI();
   LASER.target = null; LASER.key = ''; setGuideTarget(null);
   document.body.classList.remove('ar'); $('arBar').classList.add('hidden'); $('arBtn').classList.remove('on'); arMsg('');
   S.dirty = true;
@@ -1895,9 +2151,15 @@ function addOrientListeners() {
   // Chrome / Samsung Internet : on écoute l'absolu ET le relatif ; l'absolu est prioritaire s'il arrive
   if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrient);
   window.addEventListener('deviceorientation', onOrient);
+  window.addEventListener('devicemotion', onMotion);
 }
-function removeOrientListeners() { window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient); }
-$('arCalib').onclick = calibrate;
+function removeOrientListeners() { window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient); window.removeEventListener('devicemotion', onMotion); }
+$('arCalib').onclick = openCalSheet;
+$('calClose').onclick = () => $('calSheet').classList.add('hidden');
+$('ngBadge').onclick = () => { const t = $('ngTips'); t.classList.toggle('hidden'); $('calSheet').classList.add('hidden'); renderNgTips(); };
+$('ngClose').onclick = () => $('ngTips').classList.add('hidden');
+$('ngCalib').onclick = openCalSheet;
+document.querySelectorAll('[data-ngm]').forEach(b => b.onclick = () => setNgMode(b.dataset.ngm));
 // hauteur réelle de la barre AR (elle passe sur 2-3 lignes sur petit écran) : le guidage se place au-dessus
 if (window.ResizeObserver) new ResizeObserver(() => { const h = $('arBar').offsetHeight; if (h) document.body.style.setProperty('--arbar', h + 'px'); }).observe($('arBar'));
 $('arBtn').onclick = startAR;
@@ -2456,6 +2718,9 @@ window.__celeste = {
   aimAltAz(alt, az) { S.az = az * DEG; S.alt = alt * DEG; S.dirty = true; },
   perf: () => ({ renders: Q.renders, frames: Q.frames, level: Q.level, levelName: LEVELS[Q.level].name, dpr: DPR, ema: +Q.ema.toFixed(1), renderMs: +Q.cost.toFixed(2), auto: Q.auto, lowEnd, hwc: HWC, mem: DMEM, canvas: cv.width + 'x' + cv.height }),
   setLaser, setQuality: q => setQuality(q), calibrate,
+  ng: () => ({ on: NG.on, why: NG.why, mode: NG.mode, rrOk: NG.rrOk, rrNull: NG.rrNull, sign: NG.sign, noiseH: NG.noiseH, noiseT: NG.noiseT, motion: NG.motion, stats: NG.stats, jit: Math.sqrt(NG.jit.ms) }),
+  arDir: () => AR.f ? { az: norm360(Math.atan2(AR.f[1], AR.f[0]) * RAD), alt: Math.asin(clamp(AR.f[2], -1, 1)) * RAD } : null,
+  cal: () => ({ CALS: { ...CALS }, active: CAL.active, done: CAL.done, pts: CAL.pts.length, sug: (CAL.sug || []).map(x => ({ name: x.name, sel: x.sel, alt: x.alt, az: x.az })) }), calSuggest: () => calSuggest().map(x => ({ name: x.name, sel: x.sel, alt: x.alt, az: x.az })), calBegin: s => calBegin(s), calReset, setNgMode,
   sat: () => { const s = SAT.byId.get(25544), c = s && satCur(25544); return { adv: SAT.adv, opts: { ...SAT.opts }, groups: Object.fromEntries(Object.entries(SAT.g).map(([k, v]) => [k, { n: v.list.length, state: v.state, note: v.note }])), fine: SAT.fine.length, drawn: SAT.drawn, cand: SAT.cand.length, iss: c ? { ...neuToAltAz(c), range: c[3], lit: c[4], mag: c[5], speed: c[6] } : null, passes: SAT.passes ? SAT.passes.length : null, passJob: !!SAT.passJob }; },
   owner: id => ownerOf(SAT.byId.get(id)), ownStats: () => ({ known: OWN.byId.size, g: JSON.parse(JSON.stringify(OWN.g)), ver: OWN.ver, lazy: [...OWN.lazy] }),
   fineOwn: () => [...new Set(SAT.fine.map(ownFilterKey))],

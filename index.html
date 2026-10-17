@@ -159,11 +159,12 @@
 
   <!-- Barre AR -->
   <div id="arBar" class="hidden">
+    <button id="ngBadge" class="ng-badge hidden" type="button" title="Conseils pour les téléphones sans gyroscope">Mode sans gyroscope <span aria-hidden="true">ⓘ</span></button>
     <div id="arMsg"></div>
     <div class="ar-controls">
       <label>Champ <input id="arFov" type="range" min="40" max="90" step="1" value="66"><b id="arFovVal">66°</b></label>
       <label>Cap <input id="arHead" type="range" min="-30" max="30" step="1" value="0"><b id="arHeadVal">0°</b></label>
-      <button id="arCalib" class="btn hidden" title="Caler le cap : visez le Nord (ou la cible) puis touchez">Calibrer</button>
+      <button id="arCalib" class="btn" title="Calibrer sur une étoile (ou sur le Nord)">Calibrer</button>
       <button id="arExit" class="btn accent">Quitter</button>
     </div>
   </div>
@@ -176,6 +177,24 @@
     <div id="arGuideText"></div>
     <button id="arGuideClear" class="btn">✕ Effacer la cible</button>
   </div>
+  <div id="calBar" class="hidden" aria-live="polite"></div>
+  <section id="calSheet" class="ar-sheet hidden" aria-label="Calibrer sur une étoile">
+    <div class="panel-head"><h2>Calibrer sur une étoile</h2><button class="close" id="calClose" aria-label="Fermer">×</button></div>
+    <div id="calList"></div>
+  </section>
+  <section id="ngTips" class="ar-sheet hidden" aria-label="Mode sans gyroscope">
+    <div class="panel-head"><h2>Mode sans gyroscope</h2><button class="close" id="ngClose" aria-label="Fermer">×</button></div>
+    <p class="ng-why muted"></p>
+    <p>Ce téléphone s'oriente avec l'accéléromètre et la boussole seulement : l'image est lissée pour ne pas trembler, elle suit donc les mouvements avec un léger retard.</p>
+    <ul class="ng-list">
+      <li><b>Faites un « 8 »</b> dans l'air avec le téléphone, 2 ou 3 fois, pour recalibrer la boussole.</li>
+      <li><b>Retirez la coque</b> si elle est aimantée (rabat, support voiture, MagSafe) et éloignez-vous du métal : voiture, balcon, rambarde, enceintes.</li>
+      <li>Bougez <b>lentement</b> et tenez le téléphone à deux mains.</li>
+      <li>Puis <b>calibrez sur une étoile</b> : le ciel affiché se cale exactement sur le vrai.</li>
+    </ul>
+    <button class="btn accent" id="ngCalib" type="button" style="width:100%">Calibrer sur une étoile</button>
+    <div class="ng-mode"><span>Stabilisation sans gyroscope :</span><button class="mchip" data-ngm="auto" type="button">Auto</button><button class="mchip" data-ngm="on" type="button">Toujours</button><button class="mchip" data-ngm="off" type="button">Jamais</button></div>
+  </section>
   <div id="lockFlash"></div>
 
   <div id="toast" class="hidden"></div>
