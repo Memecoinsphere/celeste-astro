@@ -15,7 +15,8 @@ const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const DEFAULT_LOC = { name: 'La Rochelle', lat: 46.16, lon: -1.15, tz: 'Europe/Paris' };
 const S = {
   loc: { ...DEFAULT_LOC },
-  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: false },
+  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true },
+  quality: 'auto',
   magLimit: 6,
   az: 180 * DEG, alt: 28 * DEG, fov: 100 * DEG,
   anchor: Date.now(), slider: 0, live: true, playing: false, speed: 600,
@@ -29,13 +30,15 @@ try {
     if (isFinite(saved.magLimit)) S.magLimit = saved.magLimit;
     if (isFinite(saved.az)) { S.az = saved.az; S.alt = saved.alt; S.fov = saved.fov; }
     S.night = !!saved.night;
+    if (['auto', 'high', 'medium', 'low'].includes(saved.quality)) S.quality = saved.quality;
   }
 } catch (e) { /* stockage indisponible */ }
+try { const l = localStorage.getItem('celeste.laser'); S.opts.laser = l == null ? true : l === '1'; } catch (e) { S.opts.laser = true; }
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem('celeste.v1', JSON.stringify({ loc: S.loc, opts: S.opts, magLimit: S.magLimit, az: S.az, alt: S.alt, fov: S.fov, night: S.night })); } catch (e) {}
+    try { localStorage.setItem('celeste.v1', JSON.stringify({ loc: S.loc, opts: S.opts, magLimit: S.magLimit, az: S.az, alt: S.alt, fov: S.fov, night: S.night, quality: S.quality })); } catch (e) {}
   }, 400);
 }
 const simMs = () => S.anchor + S.slider * 60000;
@@ -43,7 +46,8 @@ let observer = new A.Observer(S.loc.lat, S.loc.lon, 0);
 
 /* ---------------- Fuseaux et formats ---------------- */
 const fmtCache = {};
-function validTz(tz) { try { new Intl.DateTimeFormat('fr-FR', { timeZone: tz }); return tz; } catch (e) { return undefined; } }
+const tzOk = new Map();
+function validTz(tz) { if (tzOk.has(tz)) return tzOk.get(tz); let r; try { new Intl.DateTimeFormat('fr-FR', { timeZone: tz }); r = tz; } catch (e) { r = undefined; } tzOk.set(tz, r); return r; }
 function fmt(kind) {
   const tz = validTz(S.loc.tz);
   const key = kind + '|' + tz;
@@ -139,6 +143,11 @@ const MW = [];
 })();
 const ECL = []; { const eps = 23.4393 * DEG; for (let l = 0; l <= 360; l += 2) { const L = l * DEG; ECL.push([Math.cos(L), Math.sin(L) * Math.cos(eps), Math.sin(L) * Math.sin(eps)]); } }
 const EQU = []; for (let r = 0; r <= 360; r += 2) EQU.push(vecFromRaDec(r, 0));
+/* Tampons précalculés (horizontaux) mis à jour dans updateSky : rien n'est recalculé à chaque image */
+const flat = list => { const a = new Float32Array(list.length * 3); list.forEach((v, i) => { a[i * 3] = v[0]; a[i * 3 + 1] = v[1]; a[i * 3 + 2] = v[2]; }); return a; };
+const CURVES = { lines: LINES.map(seg => ({ q: flat(seg), n: new Float32Array(seg.length * 3) })), ecl: { q: flat(ECL), n: new Float32Array(ECL.length * 3) }, equ: { q: flat(EQU), n: new Float32Array(EQU.length * 3) } };
+const CONSN = new Float32Array(CONS.length * 3);
+let mwKey = '';
 
 const BODIES = [
   { key: 'Sun', fr: 'Soleil', type: 'Étoile', color: '#ffe9a8', radiusKm: 696000 },
@@ -157,10 +166,16 @@ const AU_KM = 149597870.7;
 /* ---------------- Calculs astronomiques ---------------- */
 let rot = null, curT = null, frameKey = '';
 const sky = { sunAlt: -90, sunAz: 0, bodies: [] };
+const REFR_MIN = -1, REFR_STEP = 0.01, REFR = (() => { const n = Math.ceil((89.9 - REFR_MIN) / REFR_STEP) + 2, t = new Float32Array(n); for (let i = 0; i < n; i++) t[i] = A.Refraction('normal', REFR_MIN + i * REFR_STEP); return t; })();
+function refrFast(alt) {
+  if (alt < REFR_MIN || alt >= 89.9) return A.Refraction('normal', alt);
+  const x = (alt - REFR_MIN) / REFR_STEP, i = x | 0, f = x - i; return REFR[i] + (REFR[i + 1] - REFR[i]) * f;
+}
+let refrExact = false;
 function refractNEU(N, E, U, out) {
   const alt = Math.asin(clamp(U, -1, 1)) * RAD;
-  if (alt < 89.9) { // même modèle que astronomy-engine Horizon(..., 'normal')
-    const a2 = alt + A.Refraction('normal', alt);
+  if (alt < 89.9) { // même modèle que astronomy-engine Horizon(..., 'normal') ; table interpolée (< 0,5″) hors astres du Système solaire
+    const a2 = alt + (refrExact ? A.Refraction('normal', alt) : refrFast(alt));
     const c0 = Math.sqrt(N * N + E * E) || 1e-9, c1 = Math.cos(a2 * DEG);
     out[0] = N / c0 * c1; out[1] = E / c0 * c1; out[2] = Math.sin(a2 * DEG);
   } else { out[0] = N; out[1] = E; out[2] = U; }
@@ -179,7 +194,7 @@ const neuToAltAz = v => ({ alt: Math.asin(clamp(v[2], -1, 1)) * RAD, az: norm360
 function bodyState(b, t) {
   const eq = A.Equator(b.key, t, observer, false, true); // J2000 topocentrique
   const v = vecFromRaDec(eq.ra * 15, eq.dec);
-  const neu = eqjToNEU(v[0], v[1], v[2], [0, 0, 0]);
+  refrExact = true; const neu = eqjToNEU(v[0], v[1], v[2], [0, 0, 0]); refrExact = false;
   let mag = null, phase = null, phaseAngle = null;
   try { const il = A.Illumination(b.key, t); mag = il.mag; phase = il.phase_fraction; phaseAngle = il.phase_angle; } catch (e) {}
   const distKm = eq.dist * AU_KM;
@@ -188,7 +203,8 @@ function bodyState(b, t) {
 }
 function updateSky(force) {
   const ms = simMs();
-  const key = Math.round(ms / 500) + '|' + S.loc.lat + '|' + S.loc.lon;
+  // en direct : recalcul toutes les 2 s (le ciel tourne de 0,008° : invisible) ; sinon à chaque changement d'heure
+  const key = (S.live && !S.playing ? 'L' + Math.floor(ms / 2000) : ms) + '|' + S.loc.lat + '|' + S.loc.lon;
   if (!force && key === frameKey) return false;
   frameKey = key;
   curT = A.MakeTime(new Date(ms));
@@ -197,6 +213,11 @@ function updateSky(force) {
     eqjToNEU(SX[i], SY[i], SZ[i], tmp3);
     SN[i] = tmp3[0]; SE[i] = tmp3[1]; SU[i] = tmp3[2];
   }
+  const xf = (c, refr) => { const q = c.q, n = c.n; for (let k = 0; k < q.length; k += 3) { eqjToNEU(q[k], q[k + 1], q[k + 2], tmp3, refr); n[k] = tmp3[0]; n[k + 1] = tmp3[1]; n[k + 2] = tmp3[2]; } };
+  for (const c of CURVES.lines) xf(c, true);
+  xf(CURVES.ecl, true); xf(CURVES.equ, true);
+  for (let k = 0; k < CONS.length; k++) { const v = CONS[k].v; eqjToNEU(v[0], v[1], v[2], tmp3); CONSN[k * 3] = tmp3[0]; CONSN[k * 3 + 1] = tmp3[1]; CONSN[k * 3 + 2] = tmp3[2]; }
+  mwKey = '';
   sky.bodies = BODIES.map(b => bodyState(b, curT));
   sky.sunAlt = sky.bodies[0].alt; sky.sunAz = sky.bodies[0].az;
   sky.moonElong = A.MoonPhase(curT);
@@ -229,13 +250,37 @@ function riseTransitSet(bodyKey, raH, decDeg, ms) {
 /* ---------------- Canvas et projection ---------------- */
 const cv = $('sky'), ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
+/* Qualité adaptative : niveau initial selon l'appareil, puis abaissé si les images mettent trop de temps */
+const LEVELS = [
+  { name: 'Haute', dpr: 2, mag: 6.5, lab: 1, glow: 1.8 },
+  { name: 'Moyenne', dpr: 1.5, mag: 6.2, lab: 1, glow: 1.3 },
+  { name: 'Économie', dpr: 1, mag: 5.6, lab: 0.8, glow: 0.7 }];
+const HWC = navigator.hardwareConcurrency || 8, DMEM = navigator.deviceMemory || 8;
+const lowEnd = HWC <= 4 || DMEM <= 4;
+const Q = { level: 0, auto: true, base: lowEnd ? 1 : 0, ema: 16.7, n: 0, slowSince: 0, fastSince: 0, ups: 0, downs: 0, lastRT: 0, renders: 0, frames: 0, cost: 0, lastRender: 0, ovl: false };
+function initQuality() { Q.auto = S.quality === 'auto'; Q.level = Q.auto ? Q.base : { high: 0, medium: 1, low: 2 }[S.quality]; }
+function setLevel(l) { l = clamp(l, 0, 2); if (l === Q.level) return; Q.level = l; Q.n = 0; Q.ema = 16.7; Q.slowSince = Q.fastSince = 0; resize(); }
+function qualityTick(now, rendered) {
+  if (!rendered) return;
+  const dt = now - Q.lastRT; Q.lastRT = now;
+  if (dt > 250) return; // pas un rendu continu (vue immobile)
+  Q.ema += (dt - Q.ema) * 0.08; Q.n++;
+  if (!Q.auto || Q.n < 24) return;
+  if (Q.ema > 42 && Q.level < 2) { Q.fastSince = 0; if (!Q.slowSince) Q.slowSince = now; else if (now - Q.slowSince > 1200) { Q.downs++; setLevel(Q.level + 1); } }
+  else if (Q.ema < (AR.on ? 36 : 19) && Q.level > 0 && Q.ups < 2 && Q.downs < 3) { Q.slowSince = 0; if (!Q.fastSince) Q.fastSince = now; else if (now - Q.fastSince > 8000) { Q.ups++; setLevel(Q.level - 1); } }
+  else { Q.slowSince = 0; Q.fastSince = 0; }
+}
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  DPR = Math.min(window.devicePixelRatio || 1, LEVELS[Q.level].dpr);
   W = cv.clientWidth; H = cv.clientHeight;
-  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  const cw = Math.round(W * DPR), ch = Math.round(H * DPR);
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  mwKey = '';
+  document.body.classList.toggle('lite', Q.level >= 1);
   S.dirty = true; drawForecastChart();
 }
 window.addEventListener('resize', resize);
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', () => setTimeout(resize, 50));
 const V = { fN: 1, fE: 0, fU: 0, rN: 0, rE: 1, rU: 0, uN: 0, uE: 0, uU: 1, s: 1, cx: 0, cy: 0, gnomonic: false };
 function setBasisFromAzAlt(az, alt) {
   const ca = Math.cos(alt), sa = Math.sin(alt), cz = Math.cos(az), sz = Math.sin(az);
@@ -278,7 +323,6 @@ const sprite = (rgb, size = 64) => {
   g.fillStyle = gr; g.fillRect(0, 0, size, size); return c;
 };
 const GLOWS = COLRGB.map(c => sprite(c.join(',')));
-const MWSPRITE = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(190,205,255,1)'); gr.addColorStop(1, 'rgba(190,205,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return c; })();
 const SUNGLOW = sprite('255,226,150', 128);
 const spriteCache = {};
 function spriteFor(hex) {
@@ -287,11 +331,20 @@ function spriteFor(hex) {
 }
 
 /* ---------------- Rendu ---------------- */
-let picks = [], labelBoxes = [];
+let picks = [];
+const LB = new Float32Array(4 * 600); let nLB = 0;
 function labelFits(x, y, w, h) {
-  for (const b of labelBoxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false;
-  labelBoxes.push([x, y, w, h]); return true;
+  for (let k = 0; k < nLB * 4; k += 4) if (x < LB[k] + LB[k + 2] && x + w > LB[k] && y < LB[k + 1] + LB[k + 3] && y + h > LB[k + 1]) return false;
+  if (nLB < 600) { const k = nLB * 4; LB[k] = x; LB[k + 1] = y; LB[k + 2] = w; LB[k + 3] = h; nLB++; }
+  return true;
 }
+const twCache = new Map();
+function textW(txt, font) { const k = font + txt; let w = twCache.get(k); if (w === undefined) { w = ctx.measureText(txt).width; if (twCache.size > 3000) twCache.clear(); twCache.set(k, w); } return w; }
+/* étoiles visibles : tableaux typés réutilisés (pas d'objet par étoile et par image) */
+const VS_I = new Int32Array(NS), VS_X = new Float32Array(NS), VS_Y = new Float32Array(NS), VS_R = new Float32Array(NS), VS_B = new Uint8Array(NS), VS_ORD = new Int32Array(NS);
+let nVS = 0; const BUCKET_N = new Int32Array(COLBINS.length * 4 + 1), BUCKET_A = [0.3, 0.55, 0.8, 1];
+const FILLPOS = new Int32Array(COLBINS.length * 4);
+const COLSTR = COLRGB.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
 function skyColors() {
   const s = sky.sunAlt;
   const stops = [[-18, [3, 5, 11]], [-12, [6, 11, 26]], [-6, [13, 24, 56]], [-2, [30, 52, 104]], [3, [52, 98, 170]], [15, [62, 122, 205]]];
@@ -313,26 +366,29 @@ function effMagLimit() {
   if (AR.on && AR.camera) lim = Math.max(Math.min(lim, 4.5), 2.5);
   return lim;
 }
-function drawCurve(vecs, transform) {
-  let pen = false; const o = [0, 0, 0];
-  ctx.beginPath();
-  for (const v of vecs) {
-    let N, E, U;
-    if (transform) { eqjToNEU(v[0], v[1], v[2], o); N = o[0]; E = o[1]; U = o[2]; } else { N = v[0]; E = v[1]; U = v[2]; }
-    if (proj(N, E, U) && Math.abs(P.x - V.cx) < W * 3 && Math.abs(P.y - V.cy) < H * 3) {
+function pathFlat(n) { // n : Float32Array de vecteurs horizontaux (N,E,U) ; ajoute au chemin courant
+  let pen = false; const mx = W * 3, my = H * 3;
+  for (let k = 0; k < n.length; k += 3) {
+    if (proj(n[k], n[k + 1], n[k + 2]) && Math.abs(P.x - V.cx) < mx && Math.abs(P.y - V.cy) < my) {
       if (pen) ctx.lineTo(P.x, P.y); else ctx.moveTo(P.x, P.y);
       pen = true;
     } else pen = false;
   }
-  ctx.stroke();
+}
+function drawCurve(n) { ctx.beginPath(); pathFlat(n); ctx.stroke(); }
+const GRIDC = {};
+function gridCurves(step, azStep) {
+  const k = step + '|' + azStep; if (GRIDC[k]) return GRIDC[k];
+  const out = [];
+  for (let alt = -80; alt <= 80; alt += step) { if (alt === 0) continue; const pts = []; for (let az = 0; az <= 360; az += 2) pts.push(altAzVec(alt, az)); out.push(flat(pts)); }
+  for (let az = 0; az < 360; az += azStep) { const pts = []; for (let alt = -88; alt <= 88; alt += 2) pts.push(altAzVec(alt, az)); out.push(flat(pts)); }
+  return (GRIDC[k] = out);
 }
 const altAzVec = (alt, az) => [Math.cos(alt * DEG) * Math.cos(az * DEG), Math.cos(alt * DEG) * Math.sin(az * DEG), Math.sin(alt * DEG)];
 function drawAltAzGrid() {
   ctx.strokeStyle = 'rgba(110,170,255,.22)'; ctx.lineWidth = 1;
-  const step = V.fovDeg < 40 ? 5 : 10;
-  for (let alt = -80; alt <= 80; alt += step) { if (alt === 0) continue; const pts = []; for (let az = 0; az <= 360; az += 2) pts.push(altAzVec(alt, az)); drawCurve(pts); }
-  const azStep = V.fovDeg < 40 ? 10 : 15;
-  for (let az = 0; az < 360; az += azStep) { const pts = []; for (let alt = -88; alt <= 88; alt += 2) pts.push(altAzVec(alt, az)); drawCurve(pts); }
+  const step = V.fovDeg < 40 ? 5 : 10, azStep = V.fovDeg < 40 ? 10 : 15;
+  ctx.beginPath(); for (const c of gridCurves(step, azStep)) pathFlat(c); ctx.stroke();
   ctx.fillStyle = 'rgba(150,190,255,.6)'; ctx.font = '10.5px system-ui,sans-serif'; ctx.textAlign = 'left';
   const cAz = Math.atan2(V.fE, V.fN) * RAD;
   for (let alt = -60; alt <= 80; alt += 20) { const v = altAzVec(alt, cAz); if (alt && proj(v[0], v[1], v[2]) && onScreen()) ctx.fillText(alt + '°', P.x + 4, P.y - 3); }
@@ -414,11 +470,69 @@ function drawGround() {
   });
   ctx.textBaseline = 'alphabetic';
 }
+/* Voie lactée : texture galactique précalculée (1°) échantillonnée sur une grille d'écran grossière, puis agrandie
+   avec lissage bilinéaire. Quelques milliers de calculs par image au lieu de milliers d'appels drawImage. */
+const MWT_W = 360, MWT_H = 181, MWT = (() => {
+  const t = new Float32Array(MWT_W * MWT_H);
+  for (let i = 0; i < MW.length; i++) {
+    const p = MW[i], v = p.v;
+    const g0 = GAL[0][0] * v[0] + GAL[0][1] * v[1] + GAL[0][2] * v[2], g1 = GAL[1][0] * v[0] + GAL[1][1] * v[1] + GAL[1][2] * v[2], g2 = GAL[2][0] * v[0] + GAL[2][1] * v[1] + GAL[2][2] * v[2];
+    const l0 = Math.atan2(g1, g0) * RAD, b0 = Math.asin(clamp(g2, -1, 1)) * RAD, rad = p.size, amp = 0.03 * p.w;
+    const cb = Math.max(0.05, Math.cos(b0 * DEG));
+    for (let b = Math.floor(b0 - rad); b <= Math.ceil(b0 + rad); b++) {
+      if (b < -90 || b > 90) continue;
+      const dl = Math.ceil(rad / cb);
+      for (let l = Math.floor(l0 - dl); l <= Math.ceil(l0 + dl); l++) {
+        const d = Math.hypot((l - l0) * cb, b - b0); if (d >= rad) continue;
+        t[(b + 90) * MWT_W + ((l % 360) + 360) % 360] += amp * (1 - d / rad);
+      }
+    }
+  }
+  return t;
+})();
+const mwImgCv = document.createElement('canvas'), mwImgCtx = mwImgCv.getContext('2d');
+let mwImg = null;
+function drawMilkyWay(dark) {
+  const c = [5, 7, 10][Q.level]; // pas de la grille (px CSS)
+  const cols = Math.ceil(W / c) + 2, rows = Math.ceil(H / c) + 2;
+  const key = V.fN.toFixed(5) + V.fE.toFixed(5) + V.fU.toFixed(5) + V.rU.toFixed(5) + '|' + V.s.toFixed(2) + '|' + V.gnomonic + '|' + dark.toFixed(2) + '|' + c + '|' + W + 'x' + H + frameKey;
+  if (key !== mwKey) {
+    mwKey = key;
+    if (!mwImg || mwImg.width !== cols || mwImg.height !== rows) { mwImgCv.width = cols; mwImgCv.height = rows; mwImg = mwImgCtx.createImageData(cols, rows); }
+    const px = mwImg.data, m = rot, is = 1 / V.s, gn = V.gnomonic;
+    const G = GAL, ox = -c, oy = -c; // la grille déborde d'une cellule autour de l'écran
+    let o = 0;
+    for (let j = 0; j < rows; j++) {
+      const Y = -((oy + j * c) - V.cy) * is;
+      for (let i = 0; i < cols; i++, o += 4) {
+        const X = ((ox + i * c) - V.cx) * is;
+        let N, E, U;
+        if (gn) { N = V.fN + X * V.rN + Y * V.uN; E = V.fE + X * V.rE + Y * V.uE; U = V.fU + X * V.rU + Y * V.uU; const l = 1 / Math.sqrt(N * N + E * E + U * U); N *= l; E *= l; U *= l; }
+        else { const r2 = X * X + Y * Y, q = 4 / (4 + r2), d = (4 - r2) / (4 + r2); N = d * V.fN + q * (X * V.rN + Y * V.uN); E = d * V.fE + q * (X * V.rE + Y * V.uE); U = d * V.fU + q * (X * V.rU + Y * V.uU); }
+        // horizontal -> J2000 (transposée de la rotation, sans réfraction) -> galactique
+        const hy = -E;
+        const ex = m[0][0] * N + m[0][1] * hy + m[0][2] * U, ey = m[1][0] * N + m[1][1] * hy + m[1][2] * U, ez = m[2][0] * N + m[2][1] * hy + m[2][2] * U;
+        const g0 = G[0][0] * ex + G[0][1] * ey + G[0][2] * ez, g1 = G[1][0] * ex + G[1][1] * ey + G[1][2] * ez, g2 = G[2][0] * ex + G[2][1] * ey + G[2][2] * ez;
+        let lf = Math.atan2(g1, g0) * RAD; if (lf < 0) lf += 360;
+        const bf = Math.asin(g2 < -1 ? -1 : g2 > 1 ? 1 : g2) * RAD + 90;
+        const l0 = lf | 0, b0 = Math.min(179, bf | 0), fl = lf - l0, fb = bf - b0, l1 = l0 === 359 ? 0 : l0 + 1;
+        const r0 = b0 * MWT_W, r1 = r0 + MWT_W;
+        const v = (MWT[r0 + l0] * (1 - fl) + MWT[r0 + l1] * fl) * (1 - fb) + (MWT[r1 + l0] * (1 - fl) + MWT[r1 + l1] * fl) * fb;
+        const a = v * dark; const A8 = a >= 1 ? 255 : (a * 255) | 0;
+        px[o] = 190; px[o + 1] = 205; px[o + 2] = 255; px[o + 3] = A8;
+      }
+    }
+    mwImgCtx.putImageData(mwImg, 0, 0);
+  }
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low'; // fond uni dessous : « source-over » ≈ addition, et c'est le chemin le plus rapide
+  // centre du pixel (i,j) de la petite image = point de grille (ox + i·c, oy + j·c)
+  ctx.drawImage(mwImgCv, 0, 0, cols, rows, -c - c / 2, -c - c / 2, cols * c, rows * c); ctx.restore();
+}
 function render() {
   setupView();
-  const w = W, h = H;
+  const w = W, h = H, L = LEVELS[Q.level];
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  picks = []; labelBoxes = [];
+  picks.length = 0; nLB = 0; nVS = 0;
   const camOn = AR.on && AR.camera;
   if (camOn) { ctx.clearRect(0, 0, w, h); ctx.fillStyle = 'rgba(0,4,16,.25)'; ctx.fillRect(0, 0, w, h); }
   else {
@@ -434,37 +548,48 @@ function render() {
     }
   }
   const dark = S.opts.atmosphere ? clamp((-sky.sunAlt - 8) / 10, 0, 1) : 1;
-  if (S.opts.milkyway && dark > 0.05 && !camOn) {
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    const o = [0, 0, 0];
-    for (const p of MW) {
-      eqjToNEU(p.v[0], p.v[1], p.v[2], o, false);
-      if (!proj(o[0], o[1], o[2])) continue;
-      const sz = Math.min(600, p.size * DEG * V.s * (V.gnomonic ? 1 / P.d : 2 / (1 + P.d)) * 2);
-      if (P.x < -sz || P.x > w + sz || P.y < -sz || P.y > h + sz) continue;
-      ctx.globalAlpha = 0.03 * p.w * dark;
-      ctx.drawImage(MWSPRITE, P.x - sz / 2, P.y - sz / 2, sz, sz);
-    }
-    ctx.restore();
-  }
+  if (S.opts.milkyway && dark > 0.05 && !camOn) drawMilkyWay(dark);
   if (S.opts.grid) drawAltAzGrid();
-  if (S.opts.eqGrid) { ctx.strokeStyle = 'rgba(120,200,255,.35)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 1; drawCurve(EQU, true); ctx.setLineDash([]); }
-  if (S.opts.ecliptic) { ctx.strokeStyle = 'rgba(255,200,90,.32)'; ctx.setLineDash([3, 5]); ctx.lineWidth = 1; drawCurve(ECL, true); ctx.setLineDash([]); }
-  if (S.opts.lines) { ctx.strokeStyle = camOn ? 'rgba(150,190,255,.6)' : `rgba(110,150,240,${(0.14 + 0.22 * dark).toFixed(3)})`; ctx.lineWidth = camOn ? 1.4 : 1.1; for (const seg of LINES) drawCurve(seg, true); }
-  const lim = effMagLimit();
+  if (S.opts.eqGrid) { ctx.strokeStyle = 'rgba(120,200,255,.35)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 1; drawCurve(CURVES.equ.n); ctx.setLineDash([]); }
+  if (S.opts.ecliptic) { ctx.strokeStyle = 'rgba(255,200,90,.32)'; ctx.setLineDash([3, 5]); ctx.lineWidth = 1; drawCurve(CURVES.ecl.n); ctx.setLineDash([]); }
+  if (S.opts.lines) { // un seul tracé pour toutes les constellations
+    ctx.strokeStyle = camOn ? 'rgba(150,190,255,.6)' : `rgba(110,150,240,${(0.14 + 0.22 * dark).toFixed(3)})`; ctx.lineWidth = camOn ? 1.4 : 1.1;
+    ctx.beginPath(); for (const c of CURVES.lines) pathFlat(c.n); ctx.stroke();
+  }
+  const lim = Math.min(effMagLimit(), L.mag);
   const zb = clamp(Math.pow(90 / V.fovDeg, 0.22), 0.85, 1.9);
   const groundOn = !AR.on && S.opts.ground;
+  // 1) projection + élimination hors écran ; 2) tracé groupé par couleur et opacité (32 remplissages au lieu de milliers)
+  const NB = COLBINS.length * 4; BUCKET_N.fill(0);
+  const glowLim = L.glow;
+  const cullD = V.gnomonic ? 0.06 : -0.97;
   for (let i = 0; i < NS; i++) {
     const m = SMAG[i]; if (m > lim) break; // catalogue trié par magnitude
-    if (groundOn && SU[i] < 0) continue;
-    if (!proj(SN[i], SE[i], SU[i]) || !onScreen(10)) continue;
+    const sn = SN[i], se = SE[i], su = SU[i];
+    if (groundOn && su < 0) continue;
+    if (sn * V.fN + se * V.fE + su * V.fU < cullD) continue;
+    if (!proj(sn, se, su) || !onScreen(10)) continue;
     const rr = Math.min(8, (0.55 + 0.42 * Math.pow(Math.max(0, lim - m + 0.6), 1.15)) * zb);
     const a = clamp((lim - m) / 1.2 + 0.25, 0.15, 1);
-    const c = COLRGB[SCOL[i]];
-    if (m < 1.8) { const gs = rr * 7; ctx.globalAlpha = a * 0.7; ctx.drawImage(GLOWS[SCOL[i]], P.x - gs / 2, P.y - gs / 2, gs, gs); }
-    ctx.globalAlpha = a; ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-    ctx.beginPath(); ctx.arc(P.x, P.y, rr, 0, 6.2832); ctx.fill();
-    picks.push({ kind: 'star', i, x: P.x, y: P.y, r: rr, pri: m });
+    const ab = a < 0.42 ? 0 : a < 0.67 ? 1 : a < 0.9 ? 2 : 3;
+    const b = SCOL[i] * 4 + ab;
+    if (m < glowLim) { const gs = rr * 7; ctx.globalAlpha = a * 0.7; ctx.drawImage(GLOWS[SCOL[i]], P.x - gs / 2, P.y - gs / 2, gs, gs); }
+    VS_I[nVS] = i; VS_X[nVS] = P.x; VS_Y[nVS] = P.y; VS_R[nVS] = rr; VS_B[nVS] = b; nVS++;
+    BUCKET_N[b + 1]++;
+  }
+  for (let b = 0; b < NB; b++) BUCKET_N[b + 1] += BUCKET_N[b];
+  const fillPos = FILLPOS; for (let b = 0; b < NB; b++) fillPos[b] = BUCKET_N[b];
+  for (let k = 0; k < nVS; k++) VS_ORD[fillPos[VS_B[k]]++] = k;
+  for (let b = 0; b < NB; b++) {
+    const s0 = BUCKET_N[b], s1 = BUCKET_N[b + 1]; if (s1 <= s0) continue;
+    ctx.globalAlpha = BUCKET_A[b & 3]; ctx.fillStyle = COLSTR[b >> 2];
+    ctx.beginPath();
+    for (let j = s0; j < s1; j++) {
+      const k = VS_ORD[j], x = VS_X[k], y = VS_Y[k], r = VS_R[k];
+      if (r < 0.9) ctx.rect(x - r, y - r, r * 2, r * 2); // point sous-pixel : carré, bien moins coûteux qu'un disque
+      else { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832); }
+    }
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
   const bodyLabels = [];
@@ -497,38 +622,41 @@ function render() {
   }
   drawGround();
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-  ctx.font = '600 13px system-ui,sans-serif';
+  let font = '600 13px system-ui,sans-serif'; ctx.font = font;
   for (const [name, x, y, r, key] of bodyLabels) {
-    const tw = ctx.measureText(name).width;
+    const tw = textW(name, font);
     if (labelFits(x + r + 5, y - 8, tw, 16) || key === 'Moon' || key === 'Sun') { ctx.fillStyle = key === 'Sun' ? '#ffe39a' : key === 'Moon' ? '#f2efe4' : '#ffd9a0'; ctx.fillText(name, x + r + 5, y); }
   }
   if (S.opts.starNames) {
-    const lab = clamp(1.5 + 1.6 * Math.log2(100 / V.fovDeg), 1.5, 4.8);
-    ctx.font = '12px system-ui,sans-serif';
-    for (const p of picks) {
-      if (p.kind !== 'star' || SMAG[p.i] > Math.min(lab, lim)) continue;
-      const n = D.names[SHIP[p.i]]; if (!n || !n[0]) continue;
-      const tw = ctx.measureText(n[0]).width;
-      if (labelFits(p.x + p.r + 4, p.y - 7, tw, 14)) { ctx.fillStyle = camOn ? 'rgba(235,240,255,.95)' : 'rgba(200,214,245,.78)'; ctx.fillText(n[0], p.x + p.r + 4, p.y); }
+    const lab = Math.min(clamp(1.5 + 1.6 * Math.log2(100 / V.fovDeg), 1.5, 4.8) * L.lab, lim);
+    font = '12px system-ui,sans-serif'; ctx.font = font;
+    ctx.fillStyle = camOn ? 'rgba(235,240,255,.95)' : 'rgba(200,214,245,.78)';
+    for (let k = 0; k < nVS; k++) { // les étoiles visibles sont déjà triées par magnitude
+      const i = VS_I[k]; if (SMAG[i] > lab) break;
+      const n = D.names[SHIP[i]]; if (!n || !n[0]) continue;
+      const tw = textW(n[0], font), x = VS_X[k] + VS_R[k] + 4, y = VS_Y[k];
+      if (labelFits(x, y - 7, tw, 14)) ctx.fillText(n[0], x, y);
     }
   }
   if (S.opts.conNames) {
-    ctx.textAlign = 'center'; const o = [0, 0, 0];
-    ctx.font = `500 ${V.fovDeg > 140 ? 10.5 : 12}px system-ui,sans-serif`;
-    for (const c of CONS) {
+    ctx.textAlign = 'center';
+    font = `500 ${V.fovDeg > 140 ? 10.5 : 12}px system-ui,sans-serif`; ctx.font = font;
+    ctx.fillStyle = camOn ? 'rgba(170,200,255,.85)' : 'rgba(130,160,235,.55)';
+    const ls = 'letterSpacing' in ctx; if (ls) ctx.letterSpacing = '1.2px';
+    for (let k = 0; k < CONS.length; k++) {
+      const c = CONS[k];
       if (V.fovDeg > 120 && c.rank > 2) continue;
-      eqjToNEU(c.v[0], c.v[1], c.v[2], o);
-      if (groundOn && o[2] < 0) continue;
-      if (!proj(o[0], o[1], o[2]) || !onScreen(-10)) continue;
-      const txt = c.fr.toUpperCase();
-      const tw = ctx.measureText(txt).width + txt.length * 1.2 + 10;
+      if (Q.level === 2 && V.fovDeg > 90 && c.rank > 2) continue;
+      const N = CONSN[k * 3], E = CONSN[k * 3 + 1], U = CONSN[k * 3 + 2];
+      if (groundOn && U < 0) continue;
+      if (!proj(N, E, U) || !onScreen(-10)) continue;
+      const txt = c.up || (c.up = c.fr.toUpperCase());
+      const tw = textW(txt, font) + txt.length * 1.2 + 10;
       if (!labelFits(P.x - tw / 2, P.y - 8, tw, 16)) continue;
-      ctx.fillStyle = camOn ? 'rgba(170,200,255,.85)' : 'rgba(130,160,235,.55)';
-      if ('letterSpacing' in ctx) ctx.letterSpacing = '1.2px';
       ctx.fillText(txt, P.x, P.y);
-      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
       picks.push({ kind: 'con', c, x: P.x, y: P.y, r: tw / 2, pri: 50 });
     }
+    if (ls) ctx.letterSpacing = '0px';
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   drawSelection();
@@ -544,7 +672,7 @@ function selectedNEU() {
 }
 function drawSelection() {
   const v = selectedNEU(); if (!v) return;
-  const t = performance.now() / 1000;
+  const t = AR.on ? performance.now() / 1000 : 0;
   if (proj(v[0], v[1], v[2]) && onScreen(-8)) {
     const r = 15 + Math.sin(t * 3) * 1.5;
     ctx.strokeStyle = 'rgba(255,214,120,.95)'; ctx.lineWidth = 1.8;
@@ -679,6 +807,11 @@ window.addEventListener('keydown', e => {
 });
 function handleTap(x, y, touch) {
   const th = touch ? 26 : 16; let best = null, bd = 1e9;
+  for (let k = 0; k < nVS; k++) {
+    const r = VS_R[k], d = Math.hypot(VS_X[k] - x, VS_Y[k] - y) - r * 0.6;
+    const score = d + SMAG[VS_I[k]] * 1.6;
+    if (d < th && score < bd) { bd = score; best = { kind: 'star', i: VS_I[k] }; }
+  }
   for (const p of picks) {
     if (p.kind === 'con') continue;
     const d = Math.hypot(p.x - x, p.y - y) - p.r * 0.6;
@@ -791,10 +924,13 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
 });
 document.querySelectorAll('[data-opt]').forEach(cb => {
   cb.checked = !!S.opts[cb.dataset.opt];
-  cb.onchange = () => { S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); if (cb.dataset.opt === 'laser') { LASER.target = null; LASER.key = ''; renderLaserPanel(performance.now()); } };
+  cb.onchange = () => { if (cb.dataset.opt === 'laser') { setLaser(cb.checked); return; } S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); };
 });
 $('magLimit').value = S.magLimit; $('magLimitVal').textContent = num(S.magLimit, 1);
 $('magLimit').oninput = e => { S.magLimit = +e.target.value; $('magLimitVal').textContent = num(S.magLimit, 1); S.dirty = true; save(); };
+function syncQualityUI() { const el = $('qualitySel'); if (el) el.value = S.quality; }
+function setQuality(q) { S.quality = q; save(); const was = Q.level; initQuality(); if (Q.level !== was) { Q.n = 0; resize(); } else resize(); syncQualityUI(); }
+$('qualitySel').onchange = e => setQuality(e.target.value);
 function applyNight() { document.body.classList.toggle('night', S.night); $('nightBtn').classList.toggle('on', S.night); document.querySelector('meta[name=theme-color]').content = S.night ? '#000000' : '#05070d'; }
 $('nightBtn').onclick = () => { S.night = !S.night; applyNight(); save(); };
 
@@ -1022,7 +1158,7 @@ function drawForecastChart() {
 
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
-const laserActive = () => AR.on || S.opts.laser || !!LASER.pin;
+const laserActive = () => !!S.opts.laser;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
 const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
@@ -1042,9 +1178,13 @@ function centreConstellation() {
   try { return consFr(A.Constellation(ra, dec).symbol); } catch (e) { return ''; }
 }
 function updateLaser(now) {
-  if (now - LASER.last < 125) return; // ~8 Hz
-  LASER.last = now;
-  if (LASER.pin && !AR.on && S.tween) { LASER.target = LASER.pin; renderLaserPanel(now); return; }
+  if (now - LASER.last < (AR.on ? 125 : 160)) return; // ~6-8 Hz
+  // vue et ciel inchangés : inutile de refaire la recherche (sauf rafraîchissement lent du panneau)
+  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '');
+  if (vk === LASER.vk && now - LASER.last < 1500) return;
+  LASER.vk = vk; LASER.last = now;
+  const prev = LASER.target;
+  if (LASER.pin && !AR.on && S.tween) { LASER.target = LASER.pin; LASER.vk = ''; renderLaserPanel(now); return; }
   const R = laserRadiusDeg(); const lim = AR.on ? clamp(effMagLimit(), 3.5, 5) : Math.min(effMagLimit(), 5.5);
   const groundOn = !AR.on && S.opts.ground;
   let best = null, bestScore = 1e9;
@@ -1072,13 +1212,14 @@ function updateLaser(now) {
       if (!best || sameSel(best, cur) || bestScore > c.score - 0.18) { best = cur; bestScore = c.score; }
     } else if (!best) {
       if (!LASER.lostAt) LASER.lostAt = now;
-      if (now - LASER.lostAt < 350) { best = cur; bestScore = c.score; }
+      if (now - LASER.lostAt < 350) { best = cur; bestScore = c.score; LASER.vk = ''; } // délai de grâce : on revérifie au prochain tour
     }
   }
   // Cible de guidage (mode caméra) prioritaire dès qu'elle est dans le rayon
   if (AR.on && GUIDE.target && GUIDE.target.kind !== 'con') { const gs = laserScore(GUIDE.target, R); if (gs.sep < R) { best = GUIDE.target; bestScore = gs.score; } }
   if (best && !sameSel(best, cur)) LASER.lostAt = 0;
   LASER.target = best; LASER.score = bestScore;
+  if (!sameSel(prev, best) && !(prev == null && best == null)) Q.ovl = true;
   if (!best) LASER.con = centreConstellation();
   renderLaserPanel(now);
 }
@@ -1127,9 +1268,25 @@ function renderLaserPanel(now) {
   <div class="lz-hint">Touchez pour la fiche complète</div>`;
 }
 $('laserPanel').addEventListener('click', () => { if (LASER.target) { select({ ...LASER.target }); } });
+function syncLaserUI() {
+  const on = !!S.opts.laser, b = $('laserBtn');
+  b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.title = on ? 'Pointeur laser : activé (toucher pour éteindre)' : 'Pointeur laser : éteint (toucher pour allumer)';
+  $('laserBtnLbl').textContent = on ? 'Laser' : 'Laser off';
+  const cb = document.querySelector('[data-opt=laser]'); if (cb) cb.checked = on;
+}
+function setLaser(on, quiet) {
+  S.opts.laser = !!on; save();
+  try { localStorage.setItem('celeste.laser', on ? '1' : '0'); } catch (e) {}
+  LASER.vk = ''; LASER.key = '';
+  if (!on) { LASER.pin = null; if (!(AR.on && GUIDE.locked)) LASER.target = null; }
+  renderLaserPanel(performance.now()); syncLaserUI(); S.dirty = true;
+  if (!quiet) toast(on ? 'Pointeur laser activé' : 'Pointeur laser éteint (la recherche et le guidage restent actifs)', 2200);
+}
+$('laserBtn').onclick = () => setLaser(!S.opts.laser);
 function drawLaser() {
   if (!laserActive()) return;
-  const cx = V.cx, cy = V.cy, t = performance.now() / 1000;
+  const cx = V.cx, cy = V.cy, t = AR.on ? performance.now() / 1000 : 0.26;
   const R = laserRadiusDeg(); const rpx = (V.gnomonic ? Math.tan(R * DEG) : 2 * Math.tan(R * DEG / 2)) * V.s;
   ctx.save();
   // faisceau : de bas d'écran vers le centre
@@ -1191,7 +1348,7 @@ function goToObject(sel) {
   const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : 40;
   S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(az, S.az * RAD) * DEG, alt1: clamp(alt, -89, 89) * DEG, fov1: fovT * DEG };
   select(sel);
-  if (sel.kind !== 'con') { LASER.pin = sel; LASER.target = sel; LASER.key = ''; }
+  if (sel.kind !== 'con' && laserActive()) { LASER.pin = sel; LASER.target = sel; LASER.key = ''; LASER.vk = ''; }
   if (alt < 0) toast(`${objName(sel)} est ${belowText(sel, alt)}`, 7000);
   else toast(`${objName(sel)} : ${fmtDeg(alt, 0)} au-dessus de l'horizon, ${cardinal(az)}`, 3000);
 }
@@ -1219,7 +1376,7 @@ function updateGuide(now) {
   if (now - GUIDE.last < 150) return; GUIDE.last = now;
   const name = objName(g);
   let html;
-  if (GUIDE.locked) html = `<div class="gd-main ok">🎯 ${name} est dans le viseur</div><div class="gd-sub">${tgt.alt < 0 ? belowText(g, tgt.alt) + ' — caché par le sol' : 'Touchez la fiche en haut pour tous les détails'}</div>`;
+  if (GUIDE.locked) html = `<div class="gd-main ok">🎯 ${name} est dans le viseur</div><div class="gd-sub">${tgt.alt < 0 ? belowText(g, tgt.alt) + ' — caché par le sol' : laserActive() ? 'Touchez la fiche en haut pour tous les détails' : 'Touchez ici pour la fiche complète'}</div>`;
   else {
     const parts = [];
     if (Math.abs(tgt.alt) < 82 && Math.abs(vAlt) < 82 && Math.abs(dAz) > 3) parts.push(`${dAz > 0 ? '→ Tournez à droite' : '← Tournez à gauche'} ${Math.round(Math.abs(dAz))}°`);
@@ -1255,10 +1412,11 @@ function drawGuide() {
   ctx.fillText(`${objName(g)} · ${Math.round(GUIDE.info.sep)}°`, ax - c * 56, ay - s * 56 + 5); ctx.restore();
 }
 $('arGuideClear').onclick = () => setGuideTarget(null);
+$('arGuideText').addEventListener('click', () => { if (GUIDE.target && GUIDE.locked) select({ ...GUIDE.target }); });
 $('searchForm').addEventListener('submit', e => { e.preventDefault(); if (!results.length || fold(si.value) !== lastQuery) doSearch(); pickResult(selIdx || 0); });
 
 /* ---------------- Mode caméra (réalité augmentée) ---------------- */
-const AR = { on: false, camera: false, stream: null, f: null, u: null, basis: null, raw: null, offset: null, absolute: false, fov: 66, userHead: 0, gotEvent: false, evName: null, camMsg: '' };
+const AR = { lastAbs: 0, relative: false, paused: false, wantCam: false, on: false, camera: false, stream: null, f: null, u: null, basis: null, raw: null, offset: null, absolute: false, fov: 66, userHead: 0, gotEvent: false, evName: null, camMsg: '' };
 const arMsg = m => { $('arMsg').textContent = m || ''; };
 function deviceAxes(al, be, ga) {
   const a = al * DEG, b = be * DEG, g = ga * DEG;
@@ -1272,6 +1430,9 @@ function deviceAxes(al, be, ga) {
 }
 function onOrient(e) {
   if (e.alpha == null && e.beta == null) return;
+  const now = performance.now();
+  if (e.type === 'deviceorientationabsolute') AR.lastAbs = now;
+  else if (AR.lastAbs && now - AR.lastAbs < 1000) return; // Android : l'événement absolu prime sur le relatif
   AR.gotEvent = true;
   const raw = { alpha: e.alpha || 0, beta: e.beta || 0, gamma: e.gamma || 0 };
   AR.raw = raw;
@@ -1285,8 +1446,25 @@ function onOrient(e) {
     if (AR.offset == null) AR.offset = off;
     else if (!(e.webkitCompassAccuracy < 0)) AR.offset = norm360(AR.offset + angDiff(off, AR.offset) * 0.05);
     AR.absolute = true;
-  } else if (e.absolute === true || e.type === 'deviceorientationabsolute') { AR.offset = 0; AR.absolute = true; }
-  else if (AR.offset == null) { AR.offset = 0; AR.absolute = false; }
+  } else if (e.absolute === true || e.type === 'deviceorientationabsolute') { AR.offset = 0; AR.absolute = true; if (AR.relative) setRelative(false); }
+  else { if (AR.offset == null) AR.offset = 0; AR.absolute = false; }
+  S.dirty = true;
+}
+/* Orientation relative seulement (pas de boussole) : curseur « Cap » élargi à ±180° + calibrage */
+function setRelative(on) {
+  AR.relative = on; const h = $('arHead');
+  h.min = on ? -180 : -30; h.max = on ? 180 : 30;
+  if (!on) { AR.userHead = clamp(AR.userHead, -30, 30); h.value = AR.userHead; $('arHeadVal').textContent = (AR.userHead > 0 ? '+' : '') + AR.userHead + '°'; }
+  $('arCalib').classList.toggle('hidden', !on);
+}
+function calibrate() {
+  if (!AR.f) return;
+  const g = GUIDE.target, tgtAz = g ? objAltAz(g).az : 0;
+  const cur = norm360(Math.atan2(AR.f[1], AR.f[0]) * RAD);
+  let u = Math.round(norm360(AR.userHead + angDiff(tgtAz, cur) + 180) - 180);
+  AR.userHead = u; $('arHead').value = u; $('arHeadVal').textContent = (u > 0 ? '+' : '') + u + '°';
+  AR.f = null; AR.u = null; S.dirty = true;
+  toast(g ? `Cap calé sur ${objName(g)}` : 'Cap calé : le centre de l\'écran est maintenant le Nord', 3000);
 }
 const vnorm = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -1310,6 +1488,24 @@ function updateAR(now) {
   const r = vnorm(vcross(AR.u, AR.f)); const uu = vcross(AR.f, r);
   AR.basis = { fN: AR.f[0], fE: AR.f[1], fU: AR.f[2], rN: r[0], rE: r[1], rU: r[2], uN: uu[0], uE: uu[1], uU: uu[2] };
 }
+const CAM_TRIES = [
+  { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }, audio: false },
+  { video: { facingMode: 'environment' }, audio: false },
+  { video: true, audio: false }];
+function openCamera() {
+  // 720p suffit (la vidéo est en fond) et économise batterie/GPU ; on assouplit les contraintes si l'appareil les refuse
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia) return Promise.resolve(null);
+  const attempt = k => {
+    let p; try { p = md.getUserMedia(CAM_TRIES[k]); } catch (e) { p = Promise.reject(e); }
+    return p.catch(err => (k + 1 < CAM_TRIES.length && err && (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError' || err.name === 'NotReadableError' || err.name === 'TypeError' || err.name === 'AbortError')) ? attempt(k + 1) : err);
+  };
+  return attempt(0);
+}
+function attachCamera(res) {
+  AR.stream = res; AR.camera = true; AR.wantCam = true; const v = $('camera'); v.srcObject = res; v.classList.add('on');
+  const p = v.play(); if (p && p.catch) p.catch(() => {});
+}
 function startAR() {
   if (AR.on) { stopAR(); return; }
   // Les deux demandes partent directement dans le geste utilisateur (exigence iOS)
@@ -1319,9 +1515,9 @@ function startAR() {
   }
   let camP = Promise.resolve(null);
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    try { camP = navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).catch(err => err); } catch (e) { camP = Promise.resolve(e); }
+    camP = openCamera();
   }
-  AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.camMsg = '';
+  AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.camMsg = ''; AR.lastAbs = 0; AR.paused = false; AR.wantCam = false; setRelative(false);
   const carry = LASER.pin || (S.selected && S.selected.kind !== 'con' ? S.selected : null); LASER.pin = null;
   document.body.classList.add('ar'); $('arBar').classList.remove('hidden');
   if (carry) setGuideTarget({ ...carry }); $('arBtn').classList.add('on');
@@ -1331,19 +1527,18 @@ function startAR() {
   permP.then(perm => {
     if (!AR.on) return;
     if (perm !== 'granted') { arFail(/iPhone|iPad|iPod/.test(navigator.userAgent) ? 'Accès aux capteurs de mouvement refusé. Sur iPhone : Réglages › Apps › Safari › « Mouvement et orientation » (et page en HTTPS), puis rechargez.' : 'Capteurs d\'orientation refusés ou indisponibles sur cet appareil : le mode caméra nécessite un téléphone ou une tablette avec gyroscope et boussole.'); return; }
-    window.addEventListener(AR.evName, onOrient);
+    addOrientListeners();
     setTimeout(() => {
       if (!AR.on) return;
       if (!AR.gotEvent) arFail('Capteurs d\'orientation indisponibles : le mode caméra nécessite un téléphone ou une tablette avec gyroscope et boussole' + (window.isSecureContext ? '.' : ', ouvert en HTTPS.'));
-      else if (!AR.absolute) arMsg('Boussole indisponible : orientation relative. Visez une étoile connue et ajustez « Cap ».');
+      else if (!AR.absolute) { setRelative(true); arMsg(GUIDE.target ? `Boussole indisponible (orientation relative). Visez ${objName(GUIDE.target)} puis touchez « Calibrer », ou ajustez « Cap ».` : 'Boussole indisponible (orientation relative) : pointez le Nord puis touchez « Calibrer », ou ajustez « Cap » sur une étoile connue.'); }
       else arMsg(AR.camera ? 'Pointez le téléphone vers le ciel. Ajustez « Champ » et « Cap » si le ciel est décalé.' : (AR.camMsg || 'Mode gyroscope seul.'));
     }, 2500);
   });
   camP.then(res => {
     if (!AR.on) { if (res && res.getTracks) res.getTracks().forEach(t => t.stop()); return; }
     if (res && res.getTracks) {
-      AR.stream = res; AR.camera = true; const v = $('camera'); v.srcObject = res; v.classList.add('on');
-      const p = v.play(); if (p && p.catch) p.catch(() => {});
+      attachCamera(res);
     } else {
       AR.camera = false;
       AR.camMsg = res && res.name === 'NotAllowedError' ? 'Caméra refusée — mode gyroscope seul (ciel sur fond sombre).' : 'Caméra indisponible — mode gyroscope seul (ciel sur fond sombre).';
@@ -1358,19 +1553,30 @@ function stopAR() {
   AR.on = false; AR.camera = false; AR.f = null; AR.raw = null;
   if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; }
   const v = $('camera'); v.srcObject = null; v.classList.remove('on');
-  window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient);
+  removeOrientListeners(); AR.wantCam = false; AR.paused = false; setRelative(false);
   LASER.target = null; LASER.key = ''; setGuideTarget(null);
   document.body.classList.remove('ar'); $('arBar').classList.add('hidden'); $('arBtn').classList.remove('on'); arMsg('');
   S.dirty = true;
 }
+function addOrientListeners() {
+  // Chrome / Samsung Internet : on écoute l'absolu ET le relatif ; l'absolu est prioritaire s'il arrive
+  if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrient);
+  window.addEventListener('deviceorientation', onOrient);
+}
+function removeOrientListeners() { window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient); }
+$('arCalib').onclick = calibrate;
+// hauteur réelle de la barre AR (elle passe sur 2-3 lignes sur petit écran) : le guidage se place au-dessus
+if (window.ResizeObserver) new ResizeObserver(() => { const h = $('arBar').offsetHeight; if (h) document.body.style.setProperty('--arbar', h + 'px'); }).observe($('arBar'));
 $('arBtn').onclick = startAR;
 $('arExit').onclick = stopAR;
 $('arFov').oninput = e => { AR.fov = +e.target.value; $('arFovVal').textContent = AR.fov + '°'; S.dirty = true; };
-$('arHead').oninput = e => { AR.userHead = +e.target.value; $('arHeadVal').textContent = (AR.userHead > 0 ? '+' : '') + AR.userHead + '°'; };
+$('arHead').oninput = e => { AR.userHead = +e.target.value; $('arHeadVal').textContent = (AR.userHead > 0 ? '+' : '') + AR.userHead + '°'; S.dirty = true; };
 
 /* ---------------- Boucle ---------------- */
 let lastT = performance.now(), lastLive = 0, lastInfo = 0;
 function frame(now) {
+  requestAnimationFrame(frame);
+  Q.frames++;
   const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now;
   if (S.playing) { S.anchor += dt * 1000 * S.speed; S.dirty = true; }
   else if (S.live && now - lastLive > 1000) { S.anchor = Date.now(); lastLive = now; }
@@ -1380,18 +1586,42 @@ function frame(now) {
     if (k >= 1) { S.tween = null; save(); }
     S.dirty = true;
   }
+  // AR : ~30 i/s suffisent (capteurs lissés) et divisent par deux le travail GPU
+  if (AR.on && now - Q.lastRender < 31) { updateClock(); return; }
   if (AR.on) { updateAR(now); S.dirty = true; }
   const changed = updateSky(false);
-  if (laserActive()) { setupView(); if (AR.on) updateGuide(now); updateLaser(now); S.dirty = true; } else if (LASER.key) { LASER.key = ''; LASER.target = null; renderLaserPanel(now); }
-  if (changed || S.dirty || S.selected) { render(); S.dirty = false; }
+  const las = laserActive();
+  if (las || AR.on) setupView();
+  if (AR.on) updateGuide(now);
+  if (las) updateLaser(now); else if (LASER.key) { LASER.key = ''; if (!(AR.on && GUIDE.locked)) LASER.target = null; renderLaserPanel(now); }
+  if (changed || S.dirty || Q.ovl) {
+    const t0 = performance.now();
+    render(); S.dirty = false; Q.ovl = false;
+    Q.cost += (performance.now() - t0 - Q.cost) * 0.1; Q.renders++; Q.lastRender = now;
+    qualityTick(now, true);
+  }
   updateClock();
   if (S.selected && changed && now - lastInfo > (S.playing ? 300 : 1000)) { lastInfo = now; renderInfo(); }
-  requestAnimationFrame(frame);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.live) S.anchor = Date.now(); });
+/* Onglet masqué : rAF est suspendu par le navigateur ; on coupe aussi capteurs et caméra (batterie) */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (AR.on) {
+      removeOrientListeners(); AR.paused = true;
+      if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; AR.camera = false; $('camera').srcObject = null; }
+    }
+    return;
+  }
+  if (S.live) S.anchor = Date.now();
+  if (AR.on && AR.paused) {
+    AR.paused = false; addOrientListeners(); AR.f = null; AR.u = null;
+    if (AR.wantCam) openCamera().then(res => { if (!AR.on || !res || !res.getTracks) { if (res && res.getTracks) res.getTracks().forEach(t => t.stop()); return; } attachCamera(res); S.dirty = true; });
+  }
+  S.dirty = true;
+});
 
 /* ---------------- Démarrage ---------------- */
-applyNight(); syncLocUI(); syncTimeUI(); resize(); updateSky(true);
+initQuality(); applyNight(); syncLocUI(); syncTimeUI(); syncLaserUI(); syncQualityUI(); resize(); updateSky(true);
 requestAnimationFrame(frame);
 if ((location.protocol === 'https:' || location.hostname === 'localhost') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 window.__celeste = {
@@ -1403,6 +1633,8 @@ window.__celeste = {
   guide: () => ({ target: GUIDE.target && objName(GUIDE.target), ...GUIDE.info, text: $('arGuideText').innerText }),
   laser: () => ({ target: LASER.target && objName(LASER.target), kind: LASER.target && LASER.target.kind, radius: laserRadiusDeg(), html: $('laserPanel').innerText }),
   aimAltAz(alt, az) { S.az = az * DEG; S.alt = alt * DEG; S.dirty = true; },
+  perf: () => ({ renders: Q.renders, frames: Q.frames, level: Q.level, levelName: LEVELS[Q.level].name, dpr: DPR, ema: +Q.ema.toFixed(1), renderMs: +Q.cost.toFixed(2), auto: Q.auto, lowEnd, hwc: HWC, mem: DMEM, canvas: cv.width + 'x' + cv.height }),
+  setLaser, setQuality: q => setQuality(q), calibrate,
   simMs, search(q) { si.value = q; doSearch(); pickResult(0); }
 };
 })();

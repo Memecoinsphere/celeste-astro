@@ -133,7 +133,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 .ar-controls input[type=range]{min-width:0;width:auto;flex:1}
 .ar-controls b{min-width:30px;color:var(--txt);font-weight:500}
 body.ar #timebar,body.ar #topbar .brand{display:none}
-body.ar .fab:not(#arBtn):not(#nightBtn){display:none}
+body.ar .fab:not(#arBtn):not(#nightBtn):not(#laserBtn){display:none}
 
 /* Pointeur laser */
 #laserPanel{position:absolute;left:50%;transform:translateX(-50%);top:calc(84px + var(--sat));width:min(380px,calc(100% - 24px));z-index:7;padding:10px 14px;border-radius:16px;background:rgba(6,22,14,.78);border:1px solid rgba(80,255,140,.45);box-shadow:0 0 24px rgba(40,255,110,.18),0 10px 30px rgba(0,0,0,.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);cursor:pointer;font-size:13px;color:#e8fff0}
@@ -168,7 +168,7 @@ body.night #app{filter:grayscale(1) brightness(.85)}
   .brand{display:none}
   .search{max-width:none}
   .chip{max-width:34vw;padding:9px 11px}
-  #sidebar{top:auto;transform:none;bottom:calc(118px + var(--sab));right:calc(10px + var(--sar));gap:8px}
+  #sidebar{top:auto;transform:none;bottom:calc(126px + var(--sab));right:calc(10px + var(--sar));gap:8px}
   .fab{width:48px;height:48px;border-radius:14px}
   .fab .lbl{display:none}
   #timebar{bottom:calc(8px + var(--sab));width:calc(100% - 16px);padding:8px 10px 6px;border-radius:18px}
@@ -176,15 +176,70 @@ body.night #app{filter:grayscale(1) brightness(.85)}
   #clock{min-width:0;flex:1}
   #clockTime{font-size:17px}
   #clockDate{font-size:11px}
-  .sbtn{min-width:34px;height:32px;font-size:12px;padding:0 4px}
+  .sbtn{min-width:44px;height:44px;font-size:12.5px;padding:0 4px}
   .speed{gap:4px}
   .speed .sbtn[data-step="-86400"],.speed .sbtn[data-step="86400"]{display:none}
-  #speedSel{height:32px;max-width:66px}
-  #nowBtn{padding:8px 10px;font-size:12.5px}
-  .card{left:8px;right:8px;width:auto;top:auto;bottom:calc(112px + var(--sab));max-height:52vh;overflow:auto}
-  .panel,.panel.wide{left:8px;right:8px;width:auto;top:auto;bottom:calc(8px + var(--sab));max-height:72vh;border-radius:20px}
+  #speedSel{height:44px;max-width:70px}
+  #nowBtn{padding:8px 10px;font-size:12.5px;min-height:44px}
+  .card{left:8px;right:8px;width:auto;top:auto;bottom:calc(120px + var(--sab));max-height:52vh;max-height:52dvh;overflow:auto}
+  .panel,.panel.wide{left:8px;right:8px;width:auto;top:auto;bottom:calc(8px + var(--sab));max-height:72vh;max-height:calc(72dvh - var(--sat));border-radius:20px}
   .chart-wrap{height:200px}
   #hud{top:calc(60px + var(--sat))}
   #arBar{bottom:calc(8px + var(--sab))}
 }
 @media (max-width:720px){ body.ar #sidebar{bottom:calc(270px + var(--sab))} #arGuide{bottom:calc(140px + var(--sab))} .gd-main{font-size:16.5px} }
+
+/* ---- v4 : cibles tactiles ≥ 44 px, dvh, mode allégé, bouton laser, paysage ---- */
+.close{width:40px;height:40px;font-size:20px}
+.chip{min-height:44px}
+.search input{min-height:44px}
+.btn{min-height:44px}
+.toggles label{min-height:44px}
+.toggles input[type=checkbox]{width:22px;height:22px}
+#qualitySel{flex:1;min-height:40px;border-radius:10px;border:1px solid var(--line);background:rgba(20,26,44,.9);padding:0 8px}
+input[type=range]{height:28px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:4px;background:linear-gradient(90deg,rgba(122,162,255,.35),rgba(179,140,255,.35))}
+input[type=range]::-webkit-slider-thumb{width:24px;height:24px;margin-top:-10px}
+input[type=range]::-moz-range-track{height:4px;border-radius:4px;background:linear-gradient(90deg,rgba(122,162,255,.35),rgba(179,140,255,.35))}
+.panel{max-height:calc(100dvh - 200px - var(--sat) - var(--sab))}
+#laserBtn .slash{display:none}
+#laserBtn:not(.on){color:var(--mut)}
+#laserBtn:not(.on) .slash{display:inline;stroke:#ff6b7a;stroke-width:2.2}
+#laserBtn.on{background:rgba(30,120,60,.42);border-color:rgba(90,255,140,.75);color:#8dffb0;box-shadow:0 0 16px rgba(60,255,120,.35)}
+#laserBtn.on .lbl{color:#b8ffd0}
+#arCalib{flex:none}
+#arGuideText{cursor:pointer}
+#arGuideClear{min-height:44px}
+/* Mode allégé (qualité moyenne/économie, appareils modestes) : le flou d'arrière-plan est très coûteux sur les GPU Mali/Adreno d'entrée de gamme */
+body.lite .brand,body.lite .search input,body.lite .chip,body.lite .fab,body.lite #timebar,body.lite .card,body.lite .panel,body.lite #arBar,body.lite #laserPanel,body.lite #arGuide,body.lite #searchResults{backdrop-filter:none;-webkit-backdrop-filter:none}
+body.lite{--glass:rgba(12,17,30,.9);--glass2:rgba(18,24,40,.96)}
+body.lite #laserPanel{background:rgba(6,24,14,.92)}
+body.lite #arGuide{background:rgba(24,19,4,.93)}
+@media (max-width:400px){
+  .speed .sbtn[data-step="-3600"],.speed .sbtn[data-step="3600"]{display:none}
+  .chip{max-width:30vw}
+}
+@media (max-width:720px){
+  body.ar #sidebar{top:50%;bottom:auto;transform:translateY(-50%)}
+  #arGuide{bottom:calc(var(--arbar,130px) + 18px + var(--sab))}
+}
+/* Téléphone en paysage : hauteur faible */
+@media (max-height:500px) and (orientation:landscape){
+  #sidebar{top:calc(62px + var(--sat));bottom:auto;transform:none;gap:6px;right:calc(10px + var(--sar))}
+  .fab{width:46px;height:44px;border-radius:12px}
+  .fab .lbl{display:none}
+  #timebar{width:min(600px,calc(100% - 140px - var(--sal) - var(--sar)));bottom:calc(6px + var(--sab));padding:6px 10px 4px}
+  .slider-row{margin-top:2px}
+  .speed .sbtn{min-width:44px;height:44px}
+  #speedSel{height:44px}
+  .card{top:calc(60px + var(--sat));max-height:calc(100dvh - 160px - var(--sat));overflow:auto;width:300px}
+  .panel,.panel.wide{top:calc(60px + var(--sat));right:calc(66px + var(--sar));left:auto;bottom:auto;max-height:calc(100dvh - 72px - var(--sat) - var(--sab))}
+  .panel.wide{width:min(640px,calc(100% - 90px))}
+  #hud{display:none}
+  #laserPanel{top:calc(60px + var(--sat));width:min(340px,calc(100% - 140px))}
+  #toast{top:calc(150px + var(--sat))}
+  body.ar #sidebar{top:calc(62px + var(--sat));bottom:auto}
+  #arBar{width:min(560px,calc(100% - 140px));padding:6px 12px}
+  #arGuide{bottom:calc(96px + var(--sab));width:min(420px,calc(100% - 140px))}
+  .chart-wrap{height:170px}
+}
