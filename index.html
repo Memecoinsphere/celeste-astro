@@ -103,6 +103,7 @@
       <label><input type="checkbox" data-opt="milkyway" checked> Voie lactée</label>
       <label><input type="checkbox" data-opt="ground" checked> Sol opaque</label>
       <label><input type="checkbox" data-opt="atmosphere" checked> Atmosphère (ciel de jour)</label>
+      <label><input type="checkbox" data-opt="laser"> Pointeur laser (toujours actif en mode caméra)</label>
       <div class="field"><span>Magnitude limite</span><input id="magLimit" type="range" min="3" max="6.5" step="0.1" value="6"><b id="magLimitVal">6.0</b></div>
     </div>
   </section>
@@ -135,6 +136,9 @@
       <button id="arExit" class="btn accent">Quitter</button>
     </div>
   </div>
+
+  <!-- Pointeur laser : fiche compacte de l'astre visé -->
+  <div id="laserPanel" class="hidden" role="button" tabindex="0" aria-live="polite"></div>
 
   <div id="toast" class="hidden"></div>
 </div>

@@ -14,6 +14,7 @@ Ouvrez simplement `index.html` (fonctionne en `file://`, sans serveur, hors lign
 - **Recherche** (étoiles, désignations de Bayer « alpha Lyr », HIP, planètes, constellations en français ou en latin, sans accents) → centre la vue et ouvre la fiche ; flèche directionnelle si l'objet est hors champ.
 - **Lieu** : La Rochelle par défaut (46,16 N ; −1,15 E ; Europe/Paris), bouton de géolocalisation, saisie manuelle lat/lon, choix du fuseau. Réglages mémorisés (localStorage).
 - **Mode caméra (réalité augmentée)** : vidéo de la caméra arrière en fond, ciel superposé, orientation pilotée par le gyroscope/boussole (iOS : `webkitCompassHeading`, Android : `deviceorientationabsolute`), lissage, projection gnomonique calée sur un champ de ~66° (réglable), correction manuelle du cap ±30°. Repli gyroscope seul si la caméra est refusée ; message clair si les capteurs manquent.
+- **Pointeur laser** : en mode caméra (et en option « Pointeur laser » dans Calques pour le mode normal), un point laser vert lumineux avec faisceau au centre de l'écran. ~8 fois par seconde, l'astre le plus proche du centre dans un rayon de capture (~4° en mode caméra, proportionnel au champ sinon) est verrouillé — priorité Soleil/Lune/planètes, puis étoiles les plus brillantes, avec hystérésis anti-scintillement — et une fiche compacte s'affiche : nom, type spectral, constellation, magnitude, distance (parallaxe HYG pour les étoiles, astronomy-engine pour le système solaire), altitude/azimut, lever/coucher. Toucher la fiche ouvre la fiche complète. Si rien n'est visé : constellation pointée.
 - Responsive iPhone / desktop, zones de sécurité iOS, installable (manifest + service worker en HTTPS).
 
 ## Mode caméra sur iPhone : HTTPS obligatoire
@@ -25,7 +26,7 @@ Options :
 Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis la caméra. Si refusé : Réglages › Apps › Safari › Mouvement et orientation.
 
 ## Fichiers
-`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
+`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
 
 ## Limites connues
 - Catalogue limité à mag ≈ 6 (≈ 5 000 étoiles) ; pas d'objets du ciel profond (Messier) ni de satellites/ISS.

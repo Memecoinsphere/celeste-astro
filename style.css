@@ -135,6 +135,16 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 body.ar #timebar,body.ar #topbar .brand{display:none}
 body.ar .fab:not(#arBtn):not(#nightBtn){display:none}
 
+/* Pointeur laser */
+#laserPanel{position:absolute;left:50%;transform:translateX(-50%);top:calc(84px + var(--sat));width:min(380px,calc(100% - 24px));z-index:7;padding:10px 14px;border-radius:16px;background:rgba(6,22,14,.78);border:1px solid rgba(80,255,140,.45);box-shadow:0 0 24px rgba(40,255,110,.18),0 10px 30px rgba(0,0,0,.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);cursor:pointer;font-size:13px;color:#e8fff0}
+#laserPanel.empty{cursor:default;opacity:.85}
+.lz-name{font-weight:650;font-size:16px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.lz-name small{font-weight:400;font-size:12px;color:#9fdcb4}
+.lz-dot{width:9px;height:9px;border-radius:50%;background:#3a6;align-self:center;flex:none}
+.lz-dot.on{background:#5cff8f;box-shadow:0 0 10px #3cff78}
+.lz-row{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;color:#cfeedd;font-variant-numeric:tabular-nums}
+.lz-hint{margin-top:5px;font-size:11px;color:#7fbf98}
+body.night #laserPanel{background:rgba(20,0,0,.8)}
 #toast{position:absolute;left:50%;top:calc(70px + var(--sat));transform:translateX(-50%);padding:10px 16px;border-radius:999px;background:var(--glass2);border:1px solid var(--line);z-index:20;font-size:13.5px;max-width:90vw;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 
 /* Night mode: red filter over everything */

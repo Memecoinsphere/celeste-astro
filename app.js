@@ -15,7 +15,7 @@ const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const DEFAULT_LOC = { name: 'La Rochelle', lat: 46.16, lon: -1.15, tz: 'Europe/Paris' };
 const S = {
   loc: { ...DEFAULT_LOC },
-  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true },
+  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: false },
   magLimit: 6,
   az: 180 * DEG, alt: 28 * DEG, fov: 100 * DEG,
   anchor: Date.now(), slider: 0, live: true, playing: false, speed: 600,
@@ -532,10 +532,7 @@ function render() {
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   drawSelection();
-  if (AR.on) {
-    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(V.cx, V.cy, 16, 0, 7);
-    ctx.moveTo(V.cx - 26, V.cy); ctx.lineTo(V.cx - 18, V.cy); ctx.moveTo(V.cx + 18, V.cy); ctx.lineTo(V.cx + 26, V.cy); ctx.stroke();
-  }
+  drawLaser();
   updateHud();
 }
 function selectedNEU() {
@@ -602,6 +599,7 @@ function renderInfo() {
     const des = n[1] ? `${n[1]} ${c ? c.gen : n[2]}` : '';
     html = `<h3>${starName(i)}</h3><div class="sub">Étoile${c ? ' · ' + c.fr : ''}</div>${upTag(alt)}<span class="tag">${spectralHint(SBV[i])}</span>
     <dl class="kv" style="margin-top:10px"><dt>Magnitude</dt><dd>${num(SMAG[i], 2)}</dd>${des && n[0] ? `<dt>Désignation</dt><dd>${des}</dd>` : ''}<dt>Catalogue</dt><dd>HIP ${SHIP[i]}</dd>
+    ${(D.extra && D.extra[SHIP[i]] && D.extra[SHIP[i]][1]) ? `<dt>Type spectral</dt><dd>${D.extra[SHIP[i]][1]}</dd>` : ''}<dt>Distance</dt><dd>${distText({ kind: 'star', i })}</dd>
     <dt>Indice B−V</dt><dd>${num(SBV[i], 2)}</dd><dt>Asc. droite (J2000)</dt><dd>${fmtRA(SRA[i] / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(SDEC[i])}</dd>
     <dt>Altitude</dt><dd>${fmtDeg(alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(az)} ${cardinal(az)}</dd>${riseRows(r, ms)}</dl>`;
   } else if (s.kind === 'body') {
@@ -788,7 +786,7 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
 });
 document.querySelectorAll('[data-opt]').forEach(cb => {
   cb.checked = !!S.opts[cb.dataset.opt];
-  cb.onchange = () => { S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); };
+  cb.onchange = () => { S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); if (cb.dataset.opt === 'laser') { LASER.target = null; LASER.key = ''; renderLaserPanel(performance.now()); } };
 });
 $('magLimit').value = S.magLimit; $('magLimitVal').textContent = num(S.magLimit, 1);
 $('magLimit').oninput = e => { S.magLimit = +e.target.value; $('magLimitVal').textContent = num(S.magLimit, 1); S.dirty = true; save(); };
@@ -1017,6 +1015,143 @@ function drawForecastChart() {
   fcv.addEventListener('pointerleave', () => tip.classList.add('hidden'));
 })();
 
+/* ---------------- Pointeur laser ---------------- */
+const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
+const laserActive = () => AR.on || S.opts.laser;
+const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
+const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.c === b.c);
+function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
+function laserScore(sel, R) {
+  if (sel.kind === 'body') {
+    const bs = sky.bodies[sel.bi]; const sep = sepDeg(bs.neu) - bs.angRad * RAD;
+    return { sep, score: Math.max(0, sep) / R - 0.6 };
+  }
+  const i = sel.i; const sep = sepDeg([SN[i], SE[i], SU[i]]);
+  return { sep, score: sep / R + (SMAG[i] - 1) * 0.08 };
+}
+function centreConstellation() {
+  // direction visée -> J2000 (transposée de la rotation EQJ->HOR, sans réfraction)
+  const m = rot, hx = V.fN, hy = -V.fE, hz = V.fU;
+  const x = m[0][0] * hx + m[0][1] * hy + m[0][2] * hz, y = m[1][0] * hx + m[1][1] * hy + m[1][2] * hz, z = m[2][0] * hx + m[2][1] * hy + m[2][2] * hz;
+  const ra = norm360(Math.atan2(y, x) * RAD) / 15, dec = Math.asin(clamp(z, -1, 1)) * RAD;
+  try { return consFr(A.Constellation(ra, dec).symbol); } catch (e) { return ''; }
+}
+function updateLaser(now) {
+  if (now - LASER.last < 125) return; // ~8 Hz
+  LASER.last = now;
+  const R = laserRadiusDeg(); const lim = AR.on ? clamp(effMagLimit(), 3.5, 5) : Math.min(effMagLimit(), 5.5);
+  const groundOn = !AR.on && S.opts.ground;
+  let best = null, bestScore = 1e9;
+  sky.bodies.forEach((bs, bi) => {
+    if (groundOn && bs.alt < -1) return;
+    if (bs.b.key !== 'Sun' && bs.b.key !== 'Moon' && bs.mag != null && bs.mag > lim + 1.5) return;
+    const r = laserScore({ kind: 'body', bi }, R);
+    if (r.sep < R * 1.2 && r.score < bestScore) { bestScore = r.score; best = { kind: 'body', bi }; }
+  });
+  const cosR = Math.cos(R * DEG);
+  for (let i = 0; i < NS; i++) {
+    if (SMAG[i] > lim) break;
+    const d = SN[i] * V.fN + SE[i] * V.fE + SU[i] * V.fU; if (d < cosR) continue;
+    if (groundOn && SU[i] < 0) continue;
+    const sc = Math.acos(clamp(d, -1, 1)) * RAD / R + (SMAG[i] - 1) * 0.08;
+    if (sc < bestScore) { bestScore = sc; best = { kind: 'star', i }; }
+  }
+  // Hystérésis : on garde la cible tant qu'elle reste proche et pas nettement battue
+  const cur = LASER.target;
+  if (cur) {
+    const c = laserScore(cur, R);
+    const stillIn = c.sep < R * 1.4;
+    if (stillIn) {
+      LASER.lostAt = 0;
+      if (!best || sameSel(best, cur) || bestScore > c.score - 0.18) { best = cur; bestScore = c.score; }
+    } else if (!best) {
+      if (!LASER.lostAt) LASER.lostAt = now;
+      if (now - LASER.lostAt < 350) { best = cur; bestScore = c.score; }
+    }
+  }
+  if (best && !sameSel(best, cur)) LASER.lostAt = 0;
+  LASER.target = best; LASER.score = bestScore;
+  if (!best) LASER.con = centreConstellation();
+  renderLaserPanel(now);
+}
+function distText(sel) {
+  if (sel.kind === 'star') {
+    const ex = D.extra && D.extra[SHIP[sel.i]]; const pc = ex ? ex[0] : 0;
+    if (!pc) return 'inconnue';
+    const ly = pc * 3.26156;
+    return `≈ ${ly < 100 ? num(ly, 1) : Math.round(ly).toLocaleString('fr-FR')} al (${num(pc, pc < 100 ? 1 : 0)} pc)`;
+  }
+  const bs = sky.bodies[sel.bi];
+  if (bs.b.key === 'Moon') return `${Math.round(bs.distKm).toLocaleString('fr-FR')} km`;
+  const lm = bs.distKm / 299792.458 / 60;
+  return `${num(bs.eq.dist, bs.eq.dist < 10 ? 3 : 2)} UA (${lm < 60 ? num(lm, 1) + ' min' : num(lm / 60, 1) + ' h'}-lumière)`;
+}
+function renderLaserPanel(now) {
+  const el = $('laserPanel');
+  if (!laserActive()) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const t = LASER.target;
+  const key = t ? (t.kind + (t.i ?? t.bi)) : 'none:' + LASER.con;
+  if (key === LASER.key && now - LASER.lastHtml < 1000) return;
+  LASER.key = key; LASER.lastHtml = now;
+  if (!t) {
+    el.classList.add('empty');
+    el.innerHTML = `<div class="lz-name"><span class="lz-dot"></span>Visez un astre…</div><div class="lz-row">${LASER.con ? 'Constellation : <b>' + LASER.con + '</b> · ' : ''}rayon de capture ${num(laserRadiusDeg(), 1)}°</div>`;
+    return;
+  }
+  el.classList.remove('empty');
+  const ms = simMs(); let name, type, con = '', mag, aa, r;
+  if (t.kind === 'star') {
+    const n = D.names[SHIP[t.i]] || ['', '', '']; name = starName(t.i); type = 'Étoile';
+    const ex = D.extra && D.extra[SHIP[t.i]]; if (ex && ex[1]) type += ' ' + ex[1];
+    con = consFr(n[2]) || ''; mag = SMAG[t.i]; aa = starAltAz(t.i); r = riseTransitSet('star', SRA[t.i] / 15, SDEC[t.i], ms);
+    if (!con) { try { con = consFr(A.Constellation(SRA[t.i] / 15, SDEC[t.i]).symbol); } catch (e) {} }
+  } else {
+    const bs = sky.bodies[t.bi]; name = bs.b.fr; type = bs.b.type; mag = bs.mag; aa = { alt: bs.alt, az: bs.az };
+    try { con = consFr(A.Constellation(bs.eq.ra, bs.eq.dec).symbol); } catch (e) {}
+    r = riseTransitSet(bs.b.key, null, null, ms);
+    if (bs.b.key === 'Moon') type += ` · ${moonPhaseName(sky.moonElong)} ${Math.round(bs.phase * 100)} %`;
+  }
+  const rs = r.circumpolar ? 'circumpolaire' : r.never ? 'ne se lève pas' : `↑ ${hmRel(r.rise, ms)} · ↓ ${hmRel(r.set, ms)}`;
+  el.innerHTML = `<div class="lz-name"><span class="lz-dot on"></span>${name}<small>${type}</small></div>
+  <div class="lz-row">${con ? '<span>' + con + '</span>' : ''}${mag != null ? `<span>mag ${num(mag, 2)}</span>` : ''}<span>${distText(t)}</span></div>
+  <div class="lz-row"><span>Alt ${fmtDeg(aa.alt, 1)} · Az ${fmtDeg(aa.az, 0)} ${cardinal(aa.az)}</span><span>${rs}</span></div>
+  <div class="lz-hint">Touchez pour la fiche complète</div>`;
+}
+$('laserPanel').addEventListener('click', () => { if (LASER.target) { select({ ...LASER.target }); } });
+function drawLaser() {
+  if (!laserActive()) return;
+  const cx = V.cx, cy = V.cy, t = performance.now() / 1000;
+  const R = laserRadiusDeg(); const rpx = (V.gnomonic ? Math.tan(R * DEG) : 2 * Math.tan(R * DEG / 2)) * V.s;
+  ctx.save();
+  // faisceau : de bas d'écran vers le centre
+  const g = ctx.createLinearGradient(cx, H, cx, cy);
+  g.addColorStop(0, 'rgba(60,255,120,0)'); g.addColorStop(0.7, 'rgba(60,255,120,.22)'); g.addColorStop(1, 'rgba(120,255,160,.55)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(cx - 7, H); ctx.lineTo(cx + 7, H); ctx.lineTo(cx + 1.2, cy); ctx.lineTo(cx - 1.2, cy); ctx.closePath(); ctx.fill();
+  // cercle de capture
+  ctx.strokeStyle = 'rgba(90,255,140,.35)'; ctx.lineWidth = 1; ctx.setLineDash([4, 6]);
+  ctx.beginPath(); ctx.arc(cx, cy, rpx, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+  // cible
+  const tg = LASER.target; let tx = null, ty = null;
+  if (tg) {
+    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : sky.bodies[tg.bi].neu;
+    if (proj(v[0], v[1], v[2])) {
+      tx = P.x; ty = P.y;
+      ctx.strokeStyle = 'rgba(110,255,160,.95)'; ctx.lineWidth = 1.6; ctx.shadowColor = '#3cff78'; ctx.shadowBlur = 8;
+      const s = 13, k = 5;
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b]) => { ctx.beginPath(); ctx.moveTo(tx + a * s, ty + b * (s - k)); ctx.lineTo(tx + a * s, ty + b * s); ctx.lineTo(tx + a * (s - k), ty + b * s); ctx.stroke(); });
+      if (Math.hypot(tx - cx, ty - cy) > 6) { ctx.strokeStyle = 'rgba(110,255,160,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke(); }
+      ctx.shadowBlur = 0;
+    }
+  }
+  // point laser lumineux
+  const pulse = 1 + 0.15 * Math.sin(t * 6);
+  const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18 * pulse);
+  gr.addColorStop(0, 'rgba(230,255,235,1)'); gr.addColorStop(0.2, 'rgba(80,255,130,.95)'); gr.addColorStop(0.5, 'rgba(40,255,100,.35)'); gr.addColorStop(1, 'rgba(40,255,100,0)');
+  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(cx, cy, 18 * pulse, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
 /* ---------------- Mode caméra (réalité augmentée) ---------------- */
 const AR = { on: false, camera: false, stream: null, f: null, u: null, basis: null, raw: null, offset: null, absolute: false, fov: 66, userHead: 0, gotEvent: false, evName: null, camMsg: '' };
 const arMsg = m => { $('arMsg').textContent = m || ''; };
@@ -1117,6 +1252,7 @@ function stopAR() {
   if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; }
   const v = $('camera'); v.srcObject = null; v.classList.remove('on');
   window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient);
+  LASER.target = null; LASER.key = '';
   document.body.classList.remove('ar'); $('arBar').classList.add('hidden'); $('arBtn').classList.remove('on'); arMsg('');
   S.dirty = true;
 }
@@ -1139,6 +1275,7 @@ function frame(now) {
   }
   if (AR.on) { updateAR(now); S.dirty = true; }
   const changed = updateSky(false);
+  if (laserActive()) { setupView(); updateLaser(now); S.dirty = true; } else if (LASER.key) { LASER.key = ''; LASER.target = null; renderLaserPanel(now); }
   if (changed || S.dirty || S.selected) { render(); S.dirty = false; }
   updateClock();
   if (S.selected && changed && now - lastInfo > (S.playing ? 300 : 1000)) { lastInfo = now; renderInfo(); }
@@ -1156,6 +1293,8 @@ window.__celeste = {
   bodyAltAz() { updateSky(true); return sky.bodies.map(b => ({ key: b.b.key, alt: b.alt, az: b.az, mag: b.mag })); },
   starAltAzByName(name) { const it = INDEX.find(x => x.label === name && x.sel.kind === 'star'); return it ? starAltAz(it.sel.i) : null; },
   project(alt, az) { const v = altAzVec(alt, az); return proj(v[0], v[1], v[2]) ? { x: P.x, y: P.y } : null; },
+  laser: () => ({ target: LASER.target && objName(LASER.target), kind: LASER.target && LASER.target.kind, radius: laserRadiusDeg(), html: $('laserPanel').innerText }),
+  aimAltAz(alt, az) { S.az = az * DEG; S.alt = alt * DEG; S.dirty = true; },
   simMs, search(q) { si.value = q; doSearch(); pickResult(0); }
 };
 })();
