@@ -280,3 +280,13 @@ body.lite #arGuide{background:rgba(24,19,4,.93)}
 .sat-section .sect{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:#ffd66e;font-weight:600}
 .ps-h{margin:12px 0 6px;font-size:13px;color:#dfe6ff;font-weight:600}.ps-h small{color:#9aa6c8;font-weight:400}#satPassList .ps-h:first-child{margin-top:0;color:#ffd66e}
 .ps-vis{color:#ffe39a}
+
+/* ---- v7 : pays des satellites ---- */
+.own{white-space:nowrap}.own.unk{color:#9aa6c8}
+.own-line{margin:4px 0 6px;font-size:13.5px;color:#dfe6ff}
+.ps-own{margin-top:3px;font-size:12.5px;color:#dfe6ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ps-own .own{white-space:nowrap}
+.toggles label.sat-country{display:flex;flex-direction:column;align-items:stretch;gap:6px;border:0;cursor:default}
+.sat-country span{font-size:13px;color:#c9d3f0}
+#satCountry{min-height:44px;width:100%;border-radius:12px;background:rgba(255,255,255,.06);color:inherit;border:1px solid var(--line);padding:0 10px;font-size:15px}
+#satCountry option{background:#141a2e;color:#e8ecff}

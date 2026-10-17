@@ -31,6 +31,7 @@ Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis l
 - Une section **Satellites** apparaît dans *Calques* : ISS, autres stations (Tiangong…), satellites brillants, Starlink (nombre limité selon l'appareil : 600 / 250 / 100 selon la qualité Haute / Moyenne / Économie).
 - Orbites : CelesTrak (`gp.php?GROUP=stations|visual|starlink&FORMAT=tle`), mises en cache ~6 h ; hors ligne, la dernière copie est utilisée. Calcul SGP4 avec satellite.js (MIT, embarqué).
 - Positions vraies vues depuis votre lieu ; satellite éclairé (brillant) ou dans l'ombre de la Terre (anneau gris), traînée courte. Sélection par toucher, pointeur laser ou recherche (« ISS »). Fiche : altitude, distance, vitesse, éclairé/ombre, magnitude estimée, prochain passage.
+- **Pays / organisation** : drapeau + nom (champ OWNER du catalogue SATCAT de CelesTrak, `satcat/records.php?GROUP=…&FORMAT=json`, cache 7 jours ; Starlink = États-Unis/SpaceX sans téléchargement). Affiché dans la fiche, le panneau du laser et la liste des passages ; filtre par pays dans *Calques*. Sans données : « Pays inconnu ».
 - **Prochains passages (24 h)** : lever / maximum / coucher, hauteur max, directions ; l'ISS est en tête. Toucher un passage règle l'heure et vise le satellite.
 
 ## Fichiers

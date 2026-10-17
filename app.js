@@ -732,7 +732,7 @@ function renderInfo() {
     if (!I) html = '<h3>Satellite</h3><div class="sub">Données orbitales indisponibles</div>';
     else {
       const np = satNextPass(I.s);
-      html = `<h3>${I.s.name}</h3><div class="sub">Satellite · ${SAT_GROUPS[I.s.grp]} · NORAD ${I.s.id}</div>${upTag(I.aa.alt)}<span class="tag ${I.lit ? 'ok' : 'no'}">${I.lit ? 'Éclairé par le Soleil' : 'Dans l\'ombre de la Terre'}</span>
+      html = `<h3>${I.s.name}</h3><div class="sub">Satellite · ${SAT_GROUPS[I.s.grp]} · NORAD ${I.s.id}</div><div class="own-line">${ownerHtml(I.s, true)}</div>${upTag(I.aa.alt)}<span class="tag ${I.lit ? 'ok' : 'no'}">${I.lit ? 'Éclairé par le Soleil' : 'Dans l\'ombre de la Terre'}</span>
       <dl class="kv" style="margin-top:10px"><dt>Altitude de l'orbite</dt><dd>${I.h != null ? Math.round(I.h).toLocaleString('fr-FR') + ' km' : '—'}</dd><dt>Distance</dt><dd>${Math.round(I.c[3]).toLocaleString('fr-FR')} km</dd>
       <dt>Vitesse</dt><dd>${num(I.c[6], 2)} km/s (${Math.round(I.c[6] * 3600).toLocaleString('fr-FR')} km/h)</dd>${I.lit ? `<dt>Magnitude estimée</dt><dd>≈ ${num(I.c[5], 1)}</dd>` : ''}
       <dt>Altitude</dt><dd>${fmtDeg(I.aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(I.aa.az)} ${cardinal(I.aa.az)}</dd>
@@ -1301,7 +1301,7 @@ function renderLaserPanel(now) {
   if (t.kind === 'sat') {
     const I = satInfoParts(t.id); if (!I) { el.innerHTML = '<div class="lz-name">Satellite</div>'; return; }
     const np = I.aa.alt > 0 ? null : satNextPass(I.s);
-    el.innerHTML = `<div class="lz-name"><span class="lz-dot on"></span>${I.s.short}<small>Satellite · ${I.lit ? 'éclairé' : 'dans l\'ombre de la Terre'}</small></div>
+    el.innerHTML = `<div class="lz-name"><span class="lz-dot on"></span>${I.s.short}<small>${ownerShort(I.s, true)} · ${I.lit ? 'éclairé' : 'dans l\'ombre de la Terre'}</small></div>
     <div class="lz-row"><span>Altitude ${I.h != null ? Math.round(I.h).toLocaleString('fr-FR') + ' km' : '?'}</span><span>Distance ${Math.round(I.c[3]).toLocaleString('fr-FR')} km</span><span>${num(I.c[6], 2)} km/s</span>${I.lit ? `<span>mag ≈ ${num(I.c[5], 1)}</span>` : ''}</div>
     <div class="lz-row"><span>Alt ${fmtDeg(I.aa.alt, 1)} · Az ${fmtDeg(I.aa.az, 0)} ${cardinal(I.aa.az)}</span>${np ? `<span>prochain passage ${hmRel(np.rise, ms)}</span>` : ''}</div>
     <div class="lz-hint">Touchez pour la fiche complète</div>`;
@@ -1636,7 +1636,7 @@ $('arHead').oninput = e => { AR.userHead = +e.target.value; $('arHeadVal').textC
 const SATLIB = window.satellite || null;
 const SAT_GROUPS = { stations: 'Stations spatiales', visual: 'Satellites brillants', starlink: 'Starlink' };
 const SAT = {
-  adv: false, opts: { iss: true, stations: true, visual: true, starlink: false },
+  adv: false, opts: { iss: true, stations: true, visual: true, starlink: false, country: '' },
   g: { stations: { list: [], at: 0, state: '', note: '' }, visual: { list: [], at: 0, state: '', note: '' }, starlink: { list: [], at: 0, state: '', note: '' } },
   byId: new Map(), fine: [], fineDirty: true, t0: 0, t1: -1, ver: 0, drawn: 0, lastRedraw: 0,
   cand: [], scan: null, lastScanMs: -1e15, scanKey: '', passes: null, passJob: null, passKey: ''
@@ -1751,6 +1751,7 @@ async function loadSatGroup(g) {
   for (let k = INDEX.length - 1; k >= 0; k--) if (INDEX[k].sel.kind === 'sat' && INDEX[k].grp === g) INDEX.splice(k, 1);
   for (const s of list) INDEX.push({ label: s.name, sub: `Satellite · ${SAT_GROUPS[g]} · n° ${s.id}`, keys: s.iss ? ['iss', 'station spatiale internationale', fold(s.name), String(s.id)] : [fold(s.name), fold(s.short), String(s.id)], sel: { kind: 'sat', id: s.id }, rank: s.iss ? 0.5 : g === 'starlink' ? 4 : 3, grp: g });
   SAT.fineDirty = true; SAT.lastScanMs = -1e15; SAT.passKey = ''; S.dirty = true; satStatus();
+  loadSatcat(g);
 }
 function satEnsureData() {
   if (!satOn()) return;
@@ -1783,10 +1784,11 @@ function scanStep(ms) {
 }
 function buildFine(fast) {
   const L = [];
-  for (const s of SAT.g.stations.list) if (s.iss ? SAT.opts.iss : SAT.opts.stations) L.push(s);
-  if (SAT.opts.visual) for (const s of SAT.g.visual.list) L.push(s);
-  if (SAT.opts.starlink && !fast) for (const s of SAT.cand) L.push(s);
-  for (const sel of [S.selected, GUIDE.target, LASER.pin]) if (sel && sel.kind === 'sat') { const s = SAT.byId.get(sel.id); if (s && !L.includes(s)) L.push(s); }
+  const cf = SAT.opts.country ? satPassesFilter : () => true;
+  for (const s of SAT.g.stations.list) if ((s.iss ? SAT.opts.iss : SAT.opts.stations) && cf(s)) L.push(s);
+  if (SAT.opts.visual) for (const s of SAT.g.visual.list) if (cf(s)) L.push(s);
+  if (SAT.opts.starlink && !fast && (!SAT.opts.country || SAT.opts.country === 'US')) for (const s of SAT.cand) L.push(s);
+  for (const sel of [S.selected, GUIDE.target, LASER.pin]) if (sel && sel.kind === 'sat') { const s = SAT.byId.get(sel.id); if (s && cf(s) && !L.includes(s)) L.push(s); }
   for (const s of SAT.fine) if (!L.includes(s)) { s.ok = false; s.tail = null; }
   SAT.fine = L;
 }
@@ -1815,7 +1817,7 @@ function satTick(now) {
   if (!satOn()) { if (SAT.fine.length) { SAT.fine = []; SAT.drawn = 0; S.dirty = true; } return; }
   obSetup();
   const ms = satMs(), rate = S.playing ? Math.abs(S.speed) : (S.live ? 1 : 0);
-  if (SAT.opts.starlink && rate <= 60) scanStep(ms);
+  if (SAT.opts.starlink && rate <= 60 && (!SAT.opts.country || SAT.opts.country === 'US')) scanStep(ms);
   const f = SAT.t1 !== SAT.t0 ? (ms - SAT.t0) / (SAT.t1 - SAT.t0) : (ms === SAT.t0 ? 0 : -1);
   if (SAT.fineDirty || f < 0 || f > 1) computeBatch(ms, rate);
   const k = SAT.t1 !== SAT.t0 ? clamp((ms - SAT.t0) / (SAT.t1 - SAT.t0), 0, 1) : 0;
@@ -1962,10 +1964,11 @@ function renderPasses() {
   // ISS en tête (toujours), puis les autres passages assez brillants pour l'œil nu (mag ≤ 4,5), dans l'ordre chronologique
   const row = p => { const k = P2.indexOf(p); return `<li data-k="${k}" class="${p.s.iss ? 'iss' : ''}">
     <div class="ps-l1"><b>${p.s.iss ? '★ ' : ''}${p.s.short}</b><span>${fmt('dshort').format(new Date(p.rise))} · max <b>${Math.round(p.maxEl)}°</b>${p.mag < 50 ? ` · mag ${num(p.mag, 1)}` : ''}</span></div>
+    <div class="ps-own">${ownerHtml(p.s)}</div>
     <div class="ps-l2"><span>↑ ${hm(p.rise)} ${cardinal(p.azR)}</span><span>▲ ${hm(p.max)} ${cardinal(p.azM)}</span><span>↓ ${hm(p.set)} ${cardinal(p.azS)}</span>${p.v0 - p.rise > 90000 || p.set - p.v1 > 90000 ? `<span class="ps-vis">visible ${hm(p.v0)}–${hm(Math.min(p.set, p.v1 + 60000))}</span>` : ''}</div></li>`; };
-  const issP = P2.filter(p => p.s.iss), oth = P2.filter(p => !p.s.iss && p.mag <= 4.5), shown = oth.slice(0, 40);
-  el.innerHTML = `<h4 class="ps-h">★ ISS</h4>` + (issP.length ? '<ol class="passes">' + issP.map(row).join('') + '</ol>' : `<p class="muted">${SAT.opts.iss ? 'Aucun passage visible de l\'ISS dans les 24 h.' : 'ISS désactivée dans Calques.'}</p>`)
-    + `<h4 class="ps-h">Autres satellites brillants <small>(mag ≤ 4,5 · ${shown.length}${oth.length > shown.length ? ' / ' + oth.length : ''})</small></h4>`
+  const issP = P2.filter(p => p.s.iss && satPassesFilter(p.s)), oth = P2.filter(p => !p.s.iss && p.mag <= 4.5 && satPassesFilter(p.s)), shown = oth.slice(0, 40);
+  el.innerHTML = `<h4 class="ps-h">★ ISS</h4>` + (issP.length ? '<ol class="passes">' + issP.map(row).join('') + '</ol>' : `<p class="muted">${!SAT.opts.iss ? 'ISS désactivée dans Calques.' : !satPassesFilter(SAT.byId.get(25544)) ? 'ISS masquée par le filtre de pays.' : 'Aucun passage visible de l\'ISS dans les 24 h.'}</p>`)
+    + `<h4 class="ps-h">Autres satellites brillants <small>(${SAT.opts.country ? ($('satCountry').selectedOptions[0] || {}).textContent.replace(/ \(\d+\)$/, '') + ' · ' : ''}mag ≤ 4,5 · ${shown.length}${oth.length > shown.length ? ' / ' + oth.length : ''})</small></h4>`
     + (shown.length ? '<ol class="passes">' + shown.map(row).join('') + '</ol>' : '<p class="muted">Aucun.</p>');
   el.querySelectorAll('li[data-k]').forEach(li => li.onclick = () => {
     const p = P2[+li.dataset.k];
@@ -2001,12 +2004,106 @@ function saveSatOpts() { try { localStorage.setItem('celeste.sats', JSON.stringi
 function syncSatUI() {
   $('satSection').classList.toggle('hidden', !SAT.adv);
   document.querySelectorAll('[data-sat]').forEach(cb => { cb.checked = !!SAT.opts[cb.dataset.sat]; });
-  satStatus();
+  syncOwnerFilter(); satStatus();
 }
 document.querySelectorAll('[data-sat]').forEach(cb => cb.onchange = () => {
-  SAT.opts[cb.dataset.sat] = cb.checked; saveSatOpts(); SAT.fineDirty = true; SAT.lastScanMs = -1e15; SAT.passKey = ''; satEnsureData(); S.dirty = true;
+  SAT.opts[cb.dataset.sat] = cb.checked; saveSatOpts(); SAT.fineDirty = true; SAT.lastScanMs = -1e15; SAT.passKey = ''; satEnsureData(); syncOwnerFilter(); S.dirty = true;
 });
+$('satCountry').onchange = e => {
+  SAT.opts.country = e.target.value; saveSatOpts(); SAT.fineDirty = true; SAT.lastScanMs = -1e15; S.dirty = true;
+  if (S.selected && S.selected.kind === 'sat' && !satPassesFilter(SAT.byId.get(S.selected.id))) select(null);
+  if (!$('panel-sats').classList.contains('hidden')) renderPasses();
+};
 $('satPassBtn').onclick = () => { openPanel('sats', true); satEnsureData(); startPassJob(); };
+/* ---------------- Pays / organisation propriétaire (CelesTrak SATCAT, champ OWNER) ---------------- */
+// code SATCAT → [drapeau, nom français] ; liste complète des codes CelesTrak (satcat/sources.php)
+const OWNERS = {
+  ISS: ['🌐', 'Station internationale (USA, Russie, Europe, Japon, Canada)'], US: ['🇺🇸', 'États-Unis'], CIS: ['🇷🇺', 'Russie (ex-URSS)'], PRC: ['🇨🇳', 'Chine'],
+  ESA: ['🇪🇺', 'Europe (ESA)'], ESRO: ['🇪🇺', 'Europe (ESRO)'], EUME: ['🇪🇺', 'Europe (EUMETSAT)'], EUTE: ['🇪🇺', 'Europe (Eutelsat)'], FR: ['🇫🇷', 'France'], JPN: ['🇯🇵', 'Japon'],
+  IND: ['🇮🇳', 'Inde'], ISRO: ['🇮🇳', 'Inde (ISRO)'], CA: ['🇨🇦', 'Canada'], UK: ['🇬🇧', 'Royaume-Uni'], GER: ['🇩🇪', 'Allemagne'], IT: ['🇮🇹', 'Italie'], SPN: ['🇪🇸', 'Espagne'],
+  AB: ['🌐', 'Arabsat (Ligue arabe)'], ABS: ['🌐', 'ABS (Asia Broadcast Satellite)'], AC: ['🌐', 'AsiaSat'], ALG: ['🇩🇿', 'Algérie'], ANG: ['🇦🇴', 'Angola'], ARGN: ['🇦🇷', 'Argentine'],
+  ARM: ['🇦🇲', 'Arménie'], ASRA: ['🇦🇹', 'Autriche'], AUS: ['🇦🇺', 'Australie'], AZER: ['🇦🇿', 'Azerbaïdjan'], BEL: ['🇧🇪', 'Belgique'], BELA: ['🇧🇾', 'Biélorussie'], BERM: ['🇧🇲', 'Bermudes'],
+  BGD: ['🇧🇩', 'Bangladesh'], BHR: ['🇧🇭', 'Bahreïn'], BHUT: ['🇧🇹', 'Bhoutan'], BOL: ['🇧🇴', 'Bolivie'], BRAZ: ['🇧🇷', 'Brésil'], BUL: ['🇧🇬', 'Bulgarie'], BWA: ['🇧🇼', 'Botswana'],
+  CHBZ: ['🇨🇳🇧🇷', 'Chine / Brésil'], CHTU: ['🇨🇳🇹🇷', 'Chine / Turquie'], CHLE: ['🇨🇱', 'Chili'], COL: ['🇨🇴', 'Colombie'], CRI: ['🇨🇷', 'Costa Rica'], CZCH: ['🇨🇿', 'Tchéquie'],
+  DEN: ['🇩🇰', 'Danemark'], DJI: ['🇩🇯', 'Djibouti'], ECU: ['🇪🇨', 'Équateur'], EGYP: ['🇪🇬', 'Égypte'], EST: ['🇪🇪', 'Estonie'], ETH: ['🇪🇹', 'Éthiopie'], FGER: ['🇫🇷🇩🇪', 'France / Allemagne'],
+  FIN: ['🇫🇮', 'Finlande'], FRIT: ['🇫🇷🇮🇹', 'France / Italie'], GHA: ['🇬🇭', 'Ghana'], GLOB: ['🌐', 'Globalstar'], GREC: ['🇬🇷', 'Grèce'], GRSA: ['🇬🇷🇸🇦', 'Grèce / Arabie saoudite'],
+  GUAT: ['🇬🇹', 'Guatemala'], HRV: ['🇭🇷', 'Croatie'], HUN: ['🇭🇺', 'Hongrie'], IM: ['🌐', 'Inmarsat'], INDO: ['🇮🇩', 'Indonésie'], IRAN: ['🇮🇷', 'Iran'], IRAQ: ['🇮🇶', 'Irak'],
+  IRID: ['🌐', 'Iridium'], IRL: ['🇮🇪', 'Irlande'], ISRA: ['🇮🇱', 'Israël'], ITSO: ['🌐', 'Intelsat'], KAZ: ['🇰🇿', 'Kazakhstan'], KEN: ['🇰🇪', 'Kenya'], LAOS: ['🇱🇦', 'Laos'],
+  LKA: ['🇱🇰', 'Sri Lanka'], LTU: ['🇱🇹', 'Lituanie'], LUXE: ['🇱🇺', 'Luxembourg'], MA: ['🇲🇦', 'Maroc'], MALA: ['🇲🇾', 'Malaisie'], MCO: ['🇲🇨', 'Monaco'], MDA: ['🇲🇩', 'Moldavie'],
+  MEX: ['🇲🇽', 'Mexique'], MMR: ['🇲🇲', 'Birmanie'], MNE: ['🇲🇪', 'Monténégro'], MNG: ['🇲🇳', 'Mongolie'], MUS: ['🇲🇺', 'Maurice'], NATO: ['🌐', 'OTAN'], NETH: ['🇳🇱', 'Pays-Bas'],
+  NICO: ['🌐', 'New ICO'], NIG: ['🇳🇬', 'Nigeria'], NKOR: ['🇰🇵', 'Corée du Nord'], NOR: ['🇳🇴', 'Norvège'], NPL: ['🇳🇵', 'Népal'], NZ: ['🇳🇿', 'Nouvelle-Zélande'], O3B: ['🌐', 'O3b Networks'],
+  ORB: ['🌐', 'Orbcomm'], PAKI: ['🇵🇰', 'Pakistan'], PERU: ['🇵🇪', 'Pérou'], POL: ['🇵🇱', 'Pologne'], POR: ['🇵🇹', 'Portugal'], PRY: ['🇵🇾', 'Paraguay'], PRES: ['🇨🇳🇪🇺', 'Chine / Europe (ESA)'],
+  QAT: ['🇶🇦', 'Qatar'], RASC: ['🌐', 'RascomStar-QAF'], ROC: ['🇹🇼', 'Taïwan'], ROM: ['🇷🇴', 'Roumanie'], RP: ['🇵🇭', 'Philippines'], RWA: ['🇷🇼', 'Rwanda'], SAFR: ['🇿🇦', 'Afrique du Sud'],
+  SAUD: ['🇸🇦', 'Arabie saoudite'], SDN: ['🇸🇩', 'Soudan'], SEAL: ['🌐', 'Sea Launch'], SEN: ['🇸🇳', 'Sénégal'], SES: ['🇱🇺', 'SES (Luxembourg)'], SGJP: ['🇸🇬🇯🇵', 'Singapour / Japon'],
+  SING: ['🇸🇬', 'Singapour'], SKOR: ['🇰🇷', 'Corée du Sud'], SLB: ['🇸🇧', 'Îles Salomon'], STCT: ['🇸🇬🇹🇼', 'Singapour / Taïwan'], SVN: ['🇸🇮', 'Slovénie'], SWED: ['🇸🇪', 'Suède'],
+  SWTZ: ['🇨🇭', 'Suisse'], THAI: ['🇹🇭', 'Thaïlande'], TMMC: ['🇹🇲🇲🇨', 'Turkménistan / Monaco'], TUN: ['🇹🇳', 'Tunisie'], TURK: ['🇹🇷', 'Turquie'], UAE: ['🇦🇪', 'Émirats arabes unis'],
+  UKR: ['🇺🇦', 'Ukraine'], URY: ['🇺🇾', 'Uruguay'], USBZ: ['🇺🇸🇧🇷', 'États-Unis / Brésil'], VAT: ['🇻🇦', 'Vatican'], VENZ: ['🇻🇪', 'Venezuela'], VTNM: ['🇻🇳', 'Viêt Nam'], ZWE: ['🇿🇼', 'Zimbabwe'],
+  TBD: ['🏳️', 'Pays inconnu'], UNK: ['🏳️', 'Pays inconnu']
+};
+const OWN_TTL = 7 * 86400000;
+const OWN = { g: {}, byId: new Map(), lazy: new Set(), ver: 0 };
+const SATCAT_URL = q => `https://celestrak.org/satcat/records.php?${q}&FORMAT=json`;
+// Starlink : tous les objets du groupe ont OWNER = US (vérifié sur les 11 124 fiches) ; on évite de télécharger 3,7 Mo
+const OWN_GROUP_DEFAULT = { starlink: 'US' };
+function ownerOf(s, lazy) {
+  if (!s) return { code: '', flag: '🏳️', name: 'Pays inconnu', known: false };
+  let code = OWN.byId.get(s.id) || OWN_GROUP_DEFAULT[s.grp] || '';
+  const o = OWNERS[code];
+  if (!o) { if (!code && lazy) satcatLazy(s); return { code: code || '?', flag: '🏳️', name: code ? `Pays inconnu (${code})` : 'Pays inconnu', known: false }; }
+  return { code, flag: o[0], name: s.grp === 'starlink' && code === 'US' ? 'États-Unis (SpaceX)' : o[1], known: code !== 'TBD' && code !== 'UNK' };
+}
+const ownerHtml = (s, lazy) => { const o = ownerOf(s, lazy); return `<span class="own${o.known ? '' : ' unk'}" title="${o.name}">${o.flag} ${o.name}</span>`; };
+const ownerShort = (s, lazy) => { const o = ownerOf(s, lazy); return o.known ? `${o.flag} ${o.name.replace(/ \(.*\)$/, '')}` : `${o.flag} inconnu`; };
+function parseSatcat(text) {
+  const arr = JSON.parse(text); if (!Array.isArray(arr)) throw new Error('format');
+  const m = {}; for (const r of arr) if (r && r.NORAD_CAT_ID) m[r.NORAD_CAT_ID] = String(r.OWNER || '').trim() || 'UNK';
+  return m;
+}
+function applyOwners(m) { for (const k in m) OWN.byId.set(+k, m[k]); OWN.ver++; syncOwnerFilter(); refreshOwnerIndex(); SAT.fineDirty = true; SAT.passKey = ''; S.dirty = true; if ($('panel-sats') && !$('panel-sats').classList.contains('hidden') && !SAT.passJob) renderPasses(); }
+async function loadSatcat(g) {
+  if (OWN_GROUP_DEFAULT[g]) { syncOwnerFilter(); refreshOwnerIndex(); return; }
+  const st = OWN.g[g] || (OWN.g[g] = { state: '', at: 0 }); if (st.state === 'loading' || (st.state === 'ok' && Date.now() - st.at < OWN_TTL)) return;
+  const key = 'celeste.satcat.' + g; let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) {}
+  if (cached && cached.m && Date.now() - cached.at < OWN_TTL) { st.state = 'ok'; st.at = cached.at; applyOwners(cached.m); return; }
+  st.state = 'loading';
+  try {
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 20000);
+    const r = await fetch(SATCAT_URL('GROUP=' + g), { signal: ctl.signal }); clearTimeout(to);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const m = parseSatcat(await r.text()); if (!Object.keys(m).length) throw new Error('vide');
+    st.state = 'ok'; st.at = Date.now();
+    try { localStorage.setItem(key, JSON.stringify({ at: st.at, m })); } catch (e) {}
+    applyOwners(m);
+  } catch (e) {
+    if (cached && cached.m) { st.state = 'ok'; st.at = cached.at; st.stale = true; applyOwners(cached.m); } // hors ligne : dernière copie
+    else { st.state = 'error'; st.at = Date.now(); OWN.ver++; syncOwnerFilter(); } // « Pays inconnu » affiché, nouvel essai au prochain chargement
+  }
+}
+// satellite sélectionné absent du catalogue de groupe : requête unitaire (CATNR), une seule fois par objet
+function satcatLazy(s) {
+  // seulement si le catalogue du groupe a bien été chargé (objet manquant) ; jamais en rafale (≤ 10 par session)
+  if (!s || OWN.lazy.has(s.id) || OWN.lazy.size >= 10 || OWN_GROUP_DEFAULT[s.grp] || (OWN.g[s.grp] || {}).state !== 'ok') return;
+  OWN.lazy.add(s.id);
+  fetch(SATCAT_URL('CATNR=' + s.id)).then(r => r.ok ? r.text() : Promise.reject()).then(t => { const m = parseSatcat(t); if (Object.keys(m).length) applyOwners(m); }).catch(() => {});
+}
+function refreshOwnerIndex() {
+  for (const it of INDEX) if (it.sel.kind === 'sat') { const s = SAT.byId.get(it.sel.id); if (!s) continue; const o = ownerOf(s); it.sub = `Satellite · ${o.flag} ${o.name.replace(/ \(.*\)$/, '')} · ${SAT_GROUPS[s.grp]} · n° ${s.id}`; }
+}
+// filtre par pays : liste construite à partir des satellites chargés (effectifs), mémorisée dans SAT.opts.country
+const ownFilterKey = s => { const o = ownerOf(s); return o.known ? o.code : '?'; };
+const satPassesFilter = s => !SAT.opts.country || ownFilterKey(s) === SAT.opts.country;
+function syncOwnerFilter() {
+  const el = $('satCountry'); if (!el) return;
+  const cnt = new Map();
+  for (const g of ['stations', 'visual', 'starlink']) { if (g === 'starlink' && !SAT.opts.starlink) continue; if ((g === 'visual' && !SAT.opts.visual)) continue; for (const s of SAT.g[g].list) { if (g === 'stations' && !(s.iss ? SAT.opts.iss : SAT.opts.stations)) continue; const k = ownFilterKey(s); cnt.set(k, (cnt.get(k) || 0) + 1); } }
+  const cur = SAT.opts.country || '';
+  if (cur && !cnt.has(cur)) cnt.set(cur, 0);
+  const items = [...cnt].map(([k, n]) => [k, n, k === '?' ? '🏳️ Pays inconnu' : `${OWNERS[k] ? OWNERS[k][0] : '🏳️'} ${OWNERS[k] ? OWNERS[k][1] : k}`]).sort((a, b) => b[1] - a[1] || a[2].localeCompare(b[2], 'fr'));
+  const html = '<option value="">Tous les pays</option>' + items.map(([k, n, l]) => `<option value="${k}">${l} (${n})</option>`).join('');
+  if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
+  el.value = cur;
+}
 /* Déverrouillage : 5 touchers rapides sur le logo / titre */
 let brandTaps = [];
 document.querySelector('#topbar .brand').addEventListener('click', () => {
@@ -2085,7 +2182,9 @@ window.__celeste = {
   perf: () => ({ renders: Q.renders, frames: Q.frames, level: Q.level, levelName: LEVELS[Q.level].name, dpr: DPR, ema: +Q.ema.toFixed(1), renderMs: +Q.cost.toFixed(2), auto: Q.auto, lowEnd, hwc: HWC, mem: DMEM, canvas: cv.width + 'x' + cv.height }),
   setLaser, setQuality: q => setQuality(q), calibrate,
   sat: () => { const s = SAT.byId.get(25544), c = s && satCur(25544); return { adv: SAT.adv, opts: { ...SAT.opts }, groups: Object.fromEntries(Object.entries(SAT.g).map(([k, v]) => [k, { n: v.list.length, state: v.state, note: v.note }])), fine: SAT.fine.length, drawn: SAT.drawn, cand: SAT.cand.length, iss: c ? { ...neuToAltAz(c), range: c[3], lit: c[4], mag: c[5], speed: c[6] } : null, passes: SAT.passes ? SAT.passes.length : null, passJob: !!SAT.passJob }; },
-  satPasses: () => (SAT.passes || []).map(p => ({ name: p.s.short, rise: p.rise, max: p.max, set: p.set, maxEl: p.maxEl, azR: p.azR, azM: p.azM, azS: p.azS, mag: p.mag, iss: p.s.iss })),
+  owner: id => ownerOf(SAT.byId.get(id)), ownStats: () => ({ known: OWN.byId.size, g: JSON.parse(JSON.stringify(OWN.g)), ver: OWN.ver, lazy: [...OWN.lazy] }),
+  fineOwn: () => [...new Set(SAT.fine.map(ownFilterKey))],
+  satPasses: () => (SAT.passes || []).map(p => ({ id: p.s.id, own: ownerShort(p.s), code: ownFilterKey(p.s), name: p.s.short, rise: p.rise, max: p.max, set: p.set, maxEl: p.maxEl, azR: p.azR, azM: p.azM, azS: p.azS, mag: p.mag, iss: p.s.iss })),
   satAt: (id, ms) => { const s = SAT.byId.get(id); if (!s) return null; obSetup(); const d = new Date(ms), o = new Float64Array(7); if (!satState(s, d, SATLIB.gstime(d), sunEci(ms), o)) return null; const pv = SATLIB.propagate(s.rec, d), g = SATLIB.eciToGeodetic(pv.position, SATLIB.gstime(d)); return { ...neuToAltAz(o), range: o[3], lit: o[4], lat: g.latitude * RAD, lon: g.longitude * RAD, h: g.height }; },
   simMs, search(q) { si.value = q; doSearch(); pickResult(0); }
 };
