@@ -1044,7 +1044,9 @@ function renderTonight() {
 }
 
 /* ---------------- Prévisions Open-Meteo ---------------- */
-const forecastState = { key: null, hours: [], loading: false, source: '' };
+/* ---------------- Conditions d'observation : maintenant / 6 prochaines heures (Open-Meteo) ---------------- */
+const forecastState = { key: null, at: 0, byHour: new Map(), loading: false, source: '', note: '', mode: 'now', rendered: '' };
+try { const m = localStorage.getItem('celeste.meteoMode'); if (m === 'now' || m === '6h') forecastState.mode = m; } catch (e) {}
 function skyScore(h) {
   const total = h.cc ?? 100, low = h.lo ?? total, mid = h.mi ?? total, high = h.hi ?? total;
   const ce = clamp(0.55 * total + 0.45 * Math.max(low, 0.9 * mid, 0.55 * high), 0, 100);
@@ -1057,24 +1059,39 @@ function skyScore(h) {
 }
 const scoreText = s => s < 1 ? '#ff6b7a' : s < 2 ? '#ff8a5c' : s < 3 ? '#ffb547' : s < 3.6 ? '#e6d75a' : s < 4.3 ? '#6fdc7c' : '#38e0b8';
 const scoreColor = s => s < 1 ? '#5a2330' : s < 2 ? '#8c3b2f' : s < 3 ? '#c07a2c' : s < 3.6 ? '#c8b43a' : s < 4.3 ? '#5fbf6b' : '#38d6b0';
-function sunMoonHours(t0, n) {
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const ms = t0 + i * 3600000;
-    out.push({ ms, sun: altOf('Sun', ms).altitude, moon: altOf('Moon', ms).altitude, moonIll: A.Illumination('Moon', A.MakeTime(new Date(ms))).phase_fraction });
-  }
-  return out;
+const scoreWord = s => s < 1 ? 'impossible' : s < 2 ? 'mauvais' : s < 3 ? 'médiocre' : s < 3.6 ? 'correct' : s < 4.3 ? 'bon' : 'excellent';
+function darkness(sunAlt) {
+  if (sunAlt > -0.833) return { k: 0, f: 0, txt: 'Jour', cls: 'day' };
+  if (sunAlt > -6) return { k: 1, f: 0.15, txt: 'Crépuscule civil', cls: 'civ' };
+  if (sunAlt > -12) return { k: 2, f: 0.5, txt: 'Crépuscule nautique', cls: 'nau' };
+  if (sunAlt > -18) return { k: 3, f: 0.8, txt: 'Crépuscule astronomique', cls: 'ast' };
+  return { k: 4, f: 1, txt: 'Nuit noire', cls: 'night' };
+}
+/* État astronomique + météo pour un instant donné */
+function conditionsAt(ms) {
+  const t = A.MakeTime(new Date(ms));
+  const sun = altOf('Sun', ms).altitude, moonH = altOf('Moon', ms), il = A.Illumination('Moon', t), elong = A.MoonPhase(t);
+  const dk = darkness(sun);
+  // météo : valeur horaire la plus proche (Open-Meteo donne des valeurs instantanées à l'heure pile)
+  const w = forecastState.byHour.get(Math.round(ms / 3600000)) || null;
+  const wx = w ? skyScore(w) : null;
+  // malus Lune : illumination × hauteur au-dessus de l'horizon (jusqu'à −1,5 point en pleine Lune haute)
+  const moonPen = moonH.altitude > 0 ? il.phase_fraction * Math.min(1, (moonH.altitude + 5) / 35) * 1.5 : 0;
+  const obs = wx == null ? null : clamp(Math.round((wx * dk.f - moonPen * dk.f) * 10) / 10, 0, 5);
+  return { ms, sun, moonAlt: moonH.altitude, moonAz: moonH.azimuth, moonIll: il.phase_fraction, moonElong: elong, dk, w, wx, obs };
 }
 async function loadForecast(force) {
-  const st = $('forecastStatus');
   const key = S.loc.lat.toFixed(2) + ',' + S.loc.lon.toFixed(2);
-  if (!force && forecastState.key === key && forecastState.hours.length) { drawForecastChart(); return; }
+  const fresh = forecastState.key === key && forecastState.source === 'ok' && Date.now() - forecastState.at < 3600000;
+  if (!force && fresh) { renderConditions(true); return; }
   if (forecastState.loading) return;
   forecastState.loading = true; forecastState.key = key;
-  st.textContent = 'Chargement des prévisions…';
-  const cacheKey = 'celeste.fc.' + key;
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${S.loc.lat}&longitude=${S.loc.lon}&hourly=cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,visibility,wind_speed_10m,precipitation_probability,temperature_2m&forecast_days=7&timezone=GMT&timeformat=unixtime`;
-  let data = null, note = '';
+  $('forecastStatus').textContent = 'Chargement de la météo…';
+  renderConditions(true);
+  const cacheKey = 'celeste.cond.' + key;
+  // Requête réduite : de la veille à J+2 (couvre l'heure choisie et les 6 h suivantes), variables utiles seulement
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${S.loc.lat}&longitude=${S.loc.lon}&hourly=cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,visibility,wind_speed_10m,precipitation_probability,temperature_2m&past_days=1&forecast_days=3&timezone=GMT&timeformat=unixtime`;
+  let data = null, at = Date.now(), note = '';
   try {
     if (navigator.onLine === false) throw new Error('hors ligne');
     const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 10000);
@@ -1082,79 +1099,89 @@ async function loadForecast(force) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     data = await r.json();
     if (!data.hourly || !data.hourly.time) throw new Error('réponse inattendue');
-    try { localStorage.setItem(cacheKey, JSON.stringify({ at: Date.now(), data })); } catch (e) {}
-    note = `Mis à jour à ${hm(Date.now())} · ${S.loc.name} · survolez/touchez le graphique pour le détail.`;
+    try { localStorage.setItem(cacheKey, JSON.stringify({ at, data })); } catch (e) {}
+    note = `Météo Open-Meteo mise à jour à ${hm(at)} · ${S.loc.name}`;
   } catch (e) {
     let cached = null; try { cached = JSON.parse(localStorage.getItem(cacheKey) || 'null'); } catch (e2) {}
-    if (cached && cached.data && Date.now() - cached.at < 3 * 86400000) { data = cached.data; note = `⚠ Hors ligne ou service injoignable — données en cache du ${fmt('dmed').format(new Date(cached.at))} à ${hm(cached.at)}.`; }
-    else note = '⚠ Prévisions indisponibles (hors ligne ou service Open-Meteo injoignable). La carte, « Ce soir » et les nuits astronomiques ci-dessous restent calculées localement.';
+    if (cached && cached.data && Date.now() - cached.at < 2 * 86400000) { data = cached.data; at = cached.at; note = `⚠ Hors ligne ou service injoignable — météo en cache du ${fmt('dmed').format(new Date(cached.at))} à ${hm(cached.at)}.`; }
+    else note = '⚠ Météo indisponible (hors ligne ou Open-Meteo injoignable). Lune, Soleil et obscurité restent calculés localement.';
   }
-  let i0 = 0;
-  if (data) { const nowH = Math.floor(Date.now() / 3600000) * 3600; i0 = Math.max(0, data.hourly.time.findIndex(t => t >= nowH)); }
-  const t0 = data ? data.hourly.time[i0] * 1000 : Math.floor(Date.now() / 3600000) * 3600000;
-  const n = data ? Math.min(168, data.hourly.time.length - i0) : 168;
-  const astro = sunMoonHours(t0, n);
-  forecastState.hours = astro.map((a, j) => {
-    if (!data) return { ...a, score: null };
-    const Hh = data.hourly, i = i0 + j;
-    const h = { cc: Hh.cloud_cover[i], lo: Hh.cloud_cover_low[i], mi: Hh.cloud_cover_mid[i], hi: Hh.cloud_cover_high[i], rh: Hh.relative_humidity_2m[i], vis: Hh.visibility[i], wind: Hh.wind_speed_10m[i], pp: Hh.precipitation_probability ? Hh.precipitation_probability[i] : null, temp: Hh.temperature_2m[i] };
-    return { ...a, ...h, score: h.cc == null ? null : skyScore(h) };
+  forecastState.byHour = new Map();
+  if (data) {
+    const Hh = data.hourly;
+    Hh.time.forEach((tt, i) => {
+      if (Hh.cloud_cover[i] == null) return;
+      forecastState.byHour.set(Math.round(tt / 3600), { cc: Hh.cloud_cover[i], lo: Hh.cloud_cover_low[i], mi: Hh.cloud_cover_mid[i], hi: Hh.cloud_cover_high[i], rh: Hh.relative_humidity_2m[i], vis: Hh.visibility ? Hh.visibility[i] : null, wind: Hh.wind_speed_10m[i], pp: Hh.precipitation_probability ? Hh.precipitation_probability[i] : null, temp: Hh.temperature_2m[i] });
+    });
+  }
+  forecastState.source = data ? 'ok' : 'none'; forecastState.at = at; forecastState.note = note;
+  forecastState.loading = false;
+  $('forecastStatus').textContent = note;
+  renderConditions(true);
+}
+function setMeteoMode(m) {
+  forecastState.mode = m; try { localStorage.setItem('celeste.meteoMode', m); } catch (e) {}
+  renderConditions(true);
+}
+document.querySelectorAll('#meteoMode button').forEach(b => b.onclick = () => setMeteoMode(b.dataset.mode));
+const bar = (v, max, col) => `<span class="mbar"><i style="width:${clamp(v / max * 100, 0, 100).toFixed(0)}%;background:${col}"></i></span>`;
+const pct = v => v == null ? '—' : Math.round(v) + ' %';
+const moonRow = c => `${moonPhaseName(c.moonElong)} · ${Math.round(c.moonIll * 100)} % · ${c.moonAlt > 0 ? 'levée à ' + fmtDeg(c.moonAlt, 0) + ' ' + cardinal(c.moonAz) : 'couchée (' + fmtDeg(c.moonAlt, 0) + ')'}`;
+function renderNow(ms) {
+  const c = conditionsAt(ms), w = c.w;
+  const ref = S.live ? `Maintenant · ${hm(ms)}` : `Heure choisie · ${fmt('dmed').format(new Date(ms))} ${hm(ms)}`;
+  const sc = c.obs;
+  const tip = c.dk.k === 0 ? 'Il fait jour : attendez la nuit.' : sc == null ? '' : c.dk.k < 3 ? 'Ciel encore clair : planètes et étoiles brillantes seulement.' : c.moonAlt > 0 && c.moonIll > 0.5 ? 'La Lune éclaire le ciel : objets faibles difficiles.' : sc >= 3.6 ? 'Bonnes conditions pour observer.' : sc >= 2 ? 'Observation possible entre les nuages.' : 'Ciel peu favorable.';
+  let html = `<div class="cnow">
+    <div class="cnow-head"><div><div class="cref">${ref}</div><div class="cstate ${c.dk.cls}">${c.dk.txt} · Soleil ${fmtDeg(c.sun, 0)}</div></div>
+    <div class="cscore" style="color:${sc != null ? scoreText(sc) : 'var(--mut)'}"><b>${sc != null ? num(sc, 1) : '—'}</b><small>/5</small><span>${sc != null ? scoreWord(sc) : 'météo indisponible'}</span></div></div>
+    ${tip ? `<div class="ctip">${tip}</div>` : ''}
+    <dl class="cgrid">`;
+  if (w) {
+    html += `<dt>Nuages</dt><dd>${bar(w.cc, 100, '#9fb0d8')}<b>${pct(w.cc)}</b></dd>
+      <dt class="sub">bas</dt><dd>${bar(w.lo, 100, '#8091bb')}${pct(w.lo)}</dd>
+      <dt class="sub">moyens</dt><dd>${bar(w.mi, 100, '#8091bb')}${pct(w.mi)}</dd>
+      <dt class="sub">hauts</dt><dd>${bar(w.hi, 100, '#8091bb')}${pct(w.hi)}</dd>
+      <dt>Humidité</dt><dd>${bar(w.rh, 100, '#6fa8dc')}${pct(w.rh)}</dd>
+      <dt>Vent</dt><dd>${num(w.wind, 0)} km/h</dd>
+      <dt>Température</dt><dd>${num(w.temp, 0)} °C</dd>
+      ${w.vis != null ? `<dt>Visibilité</dt><dd>${num(w.vis / 1000, w.vis < 10000 ? 1 : 0)} km</dd>` : ''}
+      ${w.pp != null ? `<dt>Risque de pluie</dt><dd>${pct(w.pp)}</dd>` : ''}
+      <dt>Indice météo</dt><dd><b style="color:${scoreText(c.wx)}">${num(c.wx, 1)}</b> /5</dd>`;
+  } else html += `<dt>Météo</dt><dd>${forecastState.loading ? 'chargement…' : forecastState.source === 'ok' ? 'hors de la plage (hier à J+2)' : 'indisponible'}</dd>`;
+  html += `<dt>Lune</dt><dd>${moonRow(c)}</dd></dl></div>`;
+  return html;
+}
+function render6h(ms) {
+  const h0 = Math.floor(ms / 3600000) * 3600000;
+  // 1re ligne : l'instant choisi ; puis les 5 heures pleines suivantes
+  const rows = [conditionsAt(ms)]; for (let i = 1; i < 6; i++) rows.push(conditionsAt(h0 + i * 3600000));
+  let best = -1, bv = -1; rows.forEach((c, i) => { if (c.obs != null && c.obs > bv + 0.05) { bv = c.obs; best = i; } });
+  const anyWx = rows.some(c => c.w);
+  let html = `<div class="c6-ref">${S.live ? 'À partir de maintenant' : 'À partir de l\'heure choisie'} · ${fmt('dmed').format(new Date(ms))}</div>`;
+  if (best >= 0 && bv > 0) html += `<div class="c6-best">★ Meilleure heure : <b>${hm(rows[best].ms)}</b> — indice <b style="color:${scoreText(bv)}">${num(bv, 1)}</b> (${scoreWord(bv)})</div>`;
+  else if (anyWx) html += `<div class="c6-best muted">Aucune heure favorable dans les 6 prochaines heures.</div>`;
+  html += '<ol class="c6">';
+  rows.forEach((c, i) => {
+    const w = c.w, sc = c.obs;
+    html += `<li class="${i === best && bv > 0 ? 'best' : ''}">
+      <div class="c6-l1"><span class="c6-h">${hm(c.ms)}</span>${bar(sc ?? 0, 5, sc != null ? scoreColor(sc) : '#444')}<span class="c6-s" style="color:${sc != null ? scoreText(sc) : 'var(--mut)'}">${sc != null ? num(sc, 1) : '—'}</span></div>
+      <div class="c6-l2"><span class="cstate ${c.dk.cls}">${c.dk.txt}</span>${w ? `<span>☁ ${pct(w.cc)}</span><span>💧 ${pct(w.rh)}</span><span>💨 ${num(w.wind, 0)} km/h</span><span>${num(w.temp, 0)} °C</span>` : '<span>météo —</span>'}<span>☾ ${c.moonAlt > 0 ? fmtDeg(c.moonAlt, 0) : 'couchée'}</span></div></li>`;
   });
-  forecastState.source = data ? 'ok' : 'none';
-  st.textContent = note; forecastState.loading = false;
-  drawForecastChart(); renderNights();
+  html += '</ol><p class="fine">Indice d\'observation 0–5 : météo (nuages bas/moyens/hauts, humidité, visibilité, vent, pluie) × obscurité, moins la gêne de la Lune.</p>';
+  return html;
 }
-function renderNights() {
-  const hrs = forecastState.hours; const groups = new Map();
-  for (const h of hrs) { if (h.sun > -12) continue; const k = localMidnight(h.ms - 12 * 3600000); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(h); }
-  let html = '';
-  for (const [k, list] of groups) {
-    const dark = list.filter(h => h.sun < -18); const use = dark.length ? dark : list;
-    const sc = use.filter(h => h.score != null);
-    const avg = sc.length ? sc.reduce((a, h) => a + h.score, 0) / sc.length : null;
-    let bestTxt = '';
-    if (sc.length) { let bi = 0, bv = -1; for (let i = 0; i < sc.length; i++) { const w = sc.slice(i, i + 3); const v = w.reduce((a, h) => a + h.score, 0) / w.length; if (v > bv) { bv = v; bi = i; } } const w = sc.slice(bi, bi + 3); bestTxt = `Meilleur créneau ${hm(w[0].ms)}–${hm(w[w.length - 1].ms + 3600000)} (${num(bv, 1)})`; }
-    const moon = list[Math.floor(list.length / 2)];
-    html += `<div class="night"><b>${fmt('dmed').format(new Date(k + 12 * 3600000))}</b><span class="score" style="color:${avg != null ? scoreText(avg) : 'var(--mut)'}">${avg != null ? num(avg, 1) : '—'}</span><small> /5</small><br>
-    <small>${dark.length ? `Nuit noire ${hm(dark[0].ms)}–${hm(dark[dark.length - 1].ms + 3600000)}` : 'Pas de nuit noire'}</small><br><small>${bestTxt || 'Météo indisponible'}</small><br><small>Lune ${Math.round(moon.moonIll * 100)} %${moon.moon > 0 ? ' (levée)' : ' (couchée)'}</small></div>`;
-  }
-  $('forecastNights').innerHTML = html;
+/* Rendu HTML uniquement quand le panneau est ouvert et que l'heure (à la minute) ou le mode change : aucun redessin continu */
+function renderConditions(force) {
+  if ($('panel-forecast').classList.contains('hidden')) return;
+  const ms = simMs();
+  const key = forecastState.mode + '|' + Math.floor(ms / 60000) + '|' + forecastState.at + '|' + forecastState.loading + '|' + S.live + '|' + S.loc.lat + S.loc.lon;
+  if (!force && key === forecastState.rendered) return;
+  forecastState.rendered = key;
+  document.querySelectorAll('#meteoMode button').forEach(b => { const on = b.dataset.mode === forecastState.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+  $('condContent').innerHTML = forecastState.mode === '6h' ? render6h(ms) : renderNow(ms);
 }
-const fcv = $('forecastChart');
-let chartGeom = null;
-function drawForecastChart() {
-  if ($('panel-forecast').classList.contains('hidden') || !forecastState.hours.length) return;
-  const w = fcv.clientWidth, h = fcv.clientHeight; if (!w) return;
-  const dpr = Math.min(2, window.devicePixelRatio || 1); fcv.width = w * dpr; fcv.height = h * dpr;
-  const g = fcv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-  const hrs = forecastState.hours, n = hrs.length;
-  const L = 26, R = 6, T = 18, B = 26, pw = w - L - R, ph = h - T - B, bw = pw / n;
-  chartGeom = { L, bw };
-  hrs.forEach((x, i) => { if (x.sun < -18) { g.fillStyle = 'rgba(122,162,255,.17)'; g.fillRect(L + i * bw, T, bw + 0.5, ph); } else if (x.sun < -6) { g.fillStyle = 'rgba(122,162,255,.07)'; g.fillRect(L + i * bw, T, bw + 0.5, ph); } });
-  g.strokeStyle = 'rgba(255,255,255,.07)'; g.fillStyle = '#8d98b8'; g.font = '10px system-ui,sans-serif'; g.textAlign = 'right'; g.textBaseline = 'middle';
-  for (let s = 0; s <= 5; s++) { const y = T + ph - s / 5 * ph; g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(s, L - 6, y); }
-  hrs.forEach((x, i) => { if (x.score == null) return; const bh = Math.max(1.5, x.score / 5 * ph); g.fillStyle = scoreColor(x.score); g.globalAlpha = x.sun < -6 ? 1 : 0.4; g.fillRect(L + i * bw + 0.3, T + ph - bh, Math.max(0.8, bw - 0.6), bh); });
-  g.globalAlpha = 1;
-  if (hrs[0].cc != null) { g.strokeStyle = 'rgba(230,236,255,.6)'; g.lineWidth = 1; g.setLineDash([2, 3]); g.beginPath(); hrs.forEach((x, i) => { const y = T + ph - x.cc / 100 * ph; const X = L + i * bw + bw / 2; i ? g.lineTo(X, y) : g.moveTo(X, y); }); g.stroke(); g.setLineDash([]); }
-  g.textBaseline = 'top'; g.fillStyle = '#c9d3f0'; g.textAlign = 'center';
-  hrs.forEach((x, i) => { const p = tzParts(x.ms); if (p.h === 0) { g.strokeStyle = 'rgba(255,255,255,.2)'; g.beginPath(); g.moveTo(L + i * bw, T); g.lineTo(L + i * bw, T + ph + 4); g.stroke(); } if (p.h === 12) g.fillText(fmt('dshort').format(new Date(x.ms)), L + i * bw, T + ph + 8); });
-  if (forecastState.source !== 'ok') { g.textBaseline = 'middle'; g.fillStyle = '#ffb547'; g.font = '13px system-ui,sans-serif'; g.fillText('Météo indisponible — seules les nuits astronomiques sont affichées', L + pw / 2, T + ph / 2); }
-  g.textAlign = 'left'; g.fillStyle = '#8d98b8'; g.font = '10px system-ui,sans-serif'; g.textBaseline = 'top';
-  g.fillText(hrs[0].cc != null ? 'Indice 0–5 (barres) · ┄ couverture nuageuse %' : 'Bandes bleues = nuit astronomique', L, 2);
-}
-(function chartTip() {
-  const wrap = fcv.parentElement; const tip = document.createElement('div'); tip.id = 'chartTip'; tip.className = 'hidden'; wrap.appendChild(tip);
-  const show = cx => {
-    if (!chartGeom) return; const rect = fcv.getBoundingClientRect(); const i = Math.floor((cx - rect.left - chartGeom.L) / chartGeom.bw);
-    const x = forecastState.hours[i]; if (!x) { tip.classList.add('hidden'); return; }
-    tip.innerHTML = `<b>${fmt('dshort').format(new Date(x.ms))} ${hm(x.ms)}</b>${x.score != null ? ` · indice <b style="color:${scoreText(x.score)}">${num(x.score, 1)}</b><br>Nuages ${x.cc} % (bas ${x.lo} · moy. ${x.mi} · hauts ${x.hi})<br>Humidité ${x.rh} % · Visibilité ${x.vis != null ? num(x.vis / 1000, 0) : '?'} km<br>Vent ${num(x.wind, 0)} km/h · ${num(x.temp, 0)} °C${x.pp != null ? ' · pluie ' + x.pp + ' %' : ''}` : ''}<br>Soleil ${fmtDeg(x.sun, 0)} · Lune ${x.moon > 0 ? 'levée' : 'couchée'} (${Math.round(x.moonIll * 100)} %)`;
-    tip.classList.remove('hidden');
-    tip.style.left = Math.min(Math.max(0, cx - rect.left - 90), rect.width - 210) + 'px'; tip.style.top = '18px';
-  };
-  fcv.addEventListener('pointermove', e => show(e.clientX));
-  fcv.addEventListener('pointerdown', e => show(e.clientX));
-  fcv.addEventListener('pointerleave', () => tip.classList.add('hidden'));
-})();
+function drawForecastChart() { renderConditions(true); } // compatibilité (redimensionnement)
 
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
@@ -1573,7 +1600,7 @@ $('arFov').oninput = e => { AR.fov = +e.target.value; $('arFovVal').textContent 
 $('arHead').oninput = e => { AR.userHead = +e.target.value; $('arHeadVal').textContent = (AR.userHead > 0 ? '+' : '') + AR.userHead + '°'; S.dirty = true; };
 
 /* ---------------- Boucle ---------------- */
-let lastT = performance.now(), lastLive = 0, lastInfo = 0;
+let lastT = performance.now(), lastLive = 0, lastInfo = 0, lastCond = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   Q.frames++;
@@ -1601,6 +1628,7 @@ function frame(now) {
     qualityTick(now, true);
   }
   updateClock();
+  if (now - lastCond > 1000) { lastCond = now; renderConditions(false); }
   if (S.selected && changed && now - lastInfo > (S.playing ? 300 : 1000)) { lastInfo = now; renderInfo(); }
 }
 /* Onglet masqué : rAF est suspendu par le navigateur ; on coupe aussi capteurs et caméra (batterie) */
