@@ -15,7 +15,7 @@ const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const DEFAULT_LOC = { name: 'La Rochelle', lat: 46.16, lon: -1.15, tz: 'Europe/Paris' };
 const S = {
   loc: { ...DEFAULT_LOC },
-  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true, extreme: false },
+  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true, extreme: false, messier: false },
   quality: 'auto',
   magLimit: 6,
   az: 180 * DEG, alt: 28 * DEG, fov: 100 * DEG,
@@ -620,6 +620,7 @@ function render() {
     picks.push({ kind: 'body', bi, x, y, r: r + 4, pri: -30 });
     bodyLabels.push([bs.b.fr, x, y, r, bs.b.key]);
   }
+  drawMessier(groundOn);
   drawExtreme(groundOn);
   drawSats(camOn, groundOn);
   drawGround();
@@ -672,6 +673,7 @@ function selectedNEU() {
   if (s.kind === 'con') return eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   if (s.kind === 'sat') return satNEU(s.id);
   if (s.kind === 'xo') return xoNEU(s.i);
+  if (s.kind === 'mes') return mesNEU(s.i);
   return null;
 }
 function drawSelection() {
@@ -716,7 +718,7 @@ function starName(i) {
   if (n && n[1]) { const c = consById[n[2]]; return `${n[1]} ${c ? c.gen : n[2]}`; }
   return `HIP ${SHIP[i]}`;
 }
-function objName(s) { if (s.kind === 'xo') return XO[s.i].n.replace(/ \(.*\)$/, ''); if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
+function objName(s) { if (s.kind === 'mes') return mesTitle(MES[s.i]); if (s.kind === 'xo') return XO[s.i].n.replace(/ \(.*\)$/, ''); if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
 function spectralHint(bv) { if (bv < 0) return 'bleu-blanc (type O/B)'; if (bv < 0.3) return 'blanc (type A)'; if (bv < 0.58) return 'blanc-jaune (type F)'; if (bv < 0.81) return 'jaune (type G)'; if (bv < 1.4) return 'orangé (type K)'; return 'rouge-orangé (type M)'; }
 function riseRows(r, refMs) {
   if (r.circumpolar) return `<dt>Lever / coucher</dt><dd>Circumpolaire</dd><dt>Passage méridien</dt><dd>${hmRel(r.transit, refMs)} (${fmtDeg(r.transitAlt, 0)})</dd>`;
@@ -730,6 +732,7 @@ function renderInfo() {
   const ms = simMs(); let html = '';
   const upTag = alt => alt > 0 ? '<span class="tag ok">Au-dessus de l\'horizon</span>' : `<span class="tag no">${belowText(s, alt).replace(/^s/, 'S')}</span><br>`;
   if (s.kind === 'xo') html = xoInfoHtml(s.i, ms, upTag);
+  else if (s.kind === 'mes') html = mesInfoHtml(s.i, ms, upTag);
   else if (s.kind === 'sat') {
     const I = satInfoParts(s.id);
     if (!I) html = '<h3>Satellite</h3><div class="sub">Données orbitales indisponibles</div>';
@@ -832,16 +835,16 @@ function handleTap(x, y, touch) {
   for (const p of picks) {
     if (p.kind === 'con') continue;
     const d = Math.hypot(p.x - x, p.y - y) - p.r * 0.6;
-    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : p.kind === 'xo' ? -5 : -6);
+    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : p.kind === 'xo' ? -5 : p.kind === 'mes' ? -4.5 : -6);
     if (d < th && score < bd) { bd = score; best = p; }
   }
   if (!best) for (const p of picks) if (p.kind === 'con' && Math.abs(p.x - x) < p.r + 8 && Math.abs(p.y - y) < 12) { best = p; break; }
-  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : { kind: 'con', c: best.c });
+  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
 function select(s) { S.selected = s; renderInfo(); S.dirty = true; }
 function objAltAz(s) {
-  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
+  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : s.kind === 'mes' ? mesNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   return neuToAltAz(v);
 }
 function centerOn(s, fovDeg) {
@@ -923,7 +926,7 @@ let toastTimer = 0;
 function toast(msg, ms = 4200) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms); }
 
 /* ---------------- Panneaux ---------------- */
-const PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats'];
+const PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier'];
 function openPanel(name, forceOpen) {
   const el = $('panel-' + name); const willOpen = forceOpen || el.classList.contains('hidden');
   PANELS.forEach(n => $('panel-' + n).classList.toggle('hidden', !(n === name && willOpen)));
@@ -968,6 +971,7 @@ function setLocation(loc) {
   forecastState.key = null; updateSky(true);
   if (!$('panel-tonight').classList.contains('hidden')) renderTonight();
   if (!$('panel-forecast').classList.contains('hidden')) loadForecast();
+  MESN = null; renderMarathon();
   renderInfo();
 }
 $('locApply').onclick = () => {
@@ -1051,7 +1055,9 @@ function renderTonight() {
   <ul class="plist">${vis.length ? vis.map(r => `<li data-body="${r.b.key}"><span class="pdot" style="background:${r.b.color};color:${r.b.color}"></span><div><div class="pname">${r.b.fr}</div><div class="pmeta">mag ${r.mag != null ? num(r.mag, 1) : '?'} · lever ${hmRel(r.rise, ref)} · coucher ${hmRel(r.set, ref)}</div></div>
      <div class="pright">Meilleur : <b>${hmRel(r.best.tm, ref)}</b><br><span class="muted">${fmtDeg(r.best.alt, 0)} · ${cardinal(r.best.az)}</span></div></li>`).join('') : '<li class="muted">Aucune planète bien placée cette nuit.</li>'}</ul>
   ${hid.length ? `<div class="fine">Non visibles cette nuit : ${hid.map(r => r.b.fr).join(', ')}.</div>` : ''}
-  <p class="fine">« Meilleur » = moment de hauteur maximale entre la fin du crépuscule civil et l'aube civile. Heures : ${S.loc.tz}.</p>`;
+  <p class="fine">« Meilleur » = moment de hauteur maximale entre la fin du crépuscule civil et l'aube civile. Heures : ${S.loc.tz}.</p>
+  <button id="tonMesBtn" class="btn" type="button" style="width:100%">Ciel profond : marathon Messier de la nuit →</button>`;
+  $('tonMesBtn').onclick = () => { openPanel('messier', true); renderMarathon(); };
   drawMoonIcon($('moonIcon'), elong, il.phase_angle);
   document.querySelectorAll('.plist li[data-body]').forEach(li => li.onclick = () => {
     const bi = BODIES.findIndex(b => b.key === li.dataset.body); const s = { kind: 'body', bi };
@@ -1251,24 +1257,192 @@ function drawExtreme(groundOn) {
 function xoInfoHtml(i, ms, upTag) {
   const o = XO[i], T = XO_TYPES[o.t], aa = neuToAltAz(xoNEU(i)), vis = XO_VIS[o.vis] || ['', ''];
   const r = riseTransitSet('star', o.ra / 15, o.de, ms); let con = ''; try { con = consFr(A.Constellation(o.ra / 15, o.de).symbol); } catch (e) {}
+  const mi = MES.findIndex(m => m.xo === o.id && m.xo === 'm1'), host = MES.findIndex(m => m.xo === o.id && m.xo === 'm87bh');
   return `<h3><span class="xo-ico" style="color:rgb(${T.col})">${XO_GLYPH[o.t]}</span> ${o.n}</h3><div class="sub">${T.fr}${o.yr ? ' · supernova de ' + o.yr : ''}${con ? ' · ' + con : ''}</div>${upTag(aa.alt)}<span class="tag ${vis[0]}">${vis[1]}</span>
   <p class="xo-desc">${o.desc}</p>
   <dl class="kv"><dt>Type</dt><dd>${T.fr}</dd><dt>Distance</dt><dd>${o.d}</dd>${o.m ? `<dt>Masse</dt><dd>${o.m}</dd>` : ''}${o.per ? `<dt>Période de rotation</dt><dd>${o.per < 0.1 ? num(o.per * 1000, 2) + ' ms' : num(o.per, 3) + ' s'}</dd>` : ''}${o.b ? `<dt>Champ magnétique</dt><dd>${o.b}</dd>` : ''}
   <dt>Magnitude</dt><dd>${o.v != null ? num(o.v, 1) : '—'}</dd><dt>Observation</dt><dd>${o.vn}</dd>
   <dt>Asc. droite (J2000)</dt><dd>${fmtRA(o.ra / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(o.de)}</dd><dt>Altitude</dt><dd>${fmtDeg(aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(aa.az)} ${cardinal(aa.az)}</dd>${riseRows(r, ms)}
-  <dt>Sources</dt><dd>SIMBAD « ${o.sim} » ; ${o.src}</dd></dl>`;
+  ${mi >= 0 ? mesExtraRows(MES[mi], ms, mi, true) : ''}
+  <dt>Sources</dt><dd>SIMBAD « ${o.sim} » ; ${o.src}</dd></dl>${host >= 0 ? `<button class="btn mini mes-link" data-goto="mes:${host}" type="button">⬮ Sa galaxie hôte : M87 (catalogue de Messier) →</button>` : ''}`;
 }
 const XO_GLYPH = { bh: '◉', snr: '✺', psr: '⊘', mag: '∞', qso: '◆', star: '✩' };
 function xoNEU(i) { xoUpdate(); return XO[i].neu; }
+
+/* ---------------- Catalogue de Messier (messier.js : OpenNGC + SEDS, validé contre SIMBAD) ---------------- */
+const MES = (window.CELESTE_MESSIER || []).map(o => {
+  const a = o.ra * DEG, d = o.de * DEG;
+  return { ...o, v3: vecFromRaDec(o.ra, o.de), nv: [-Math.sin(d) * Math.cos(a), -Math.sin(d) * Math.sin(a), Math.cos(d)], ev: [-Math.sin(a), Math.cos(a), 0], neu: [0, 0, -1], xoI: o.xo ? XO.findIndex(x => x.id === o.xo) : -1 };
+});
+const MES_ORDER = MES.map((o, i) => i).sort((a, b) => MES[a].mag - MES[b].mag); // étiquettes : les plus brillants d'abord
+const MES_T = {
+  gs: { fr: 'Galaxie spirale', col: '255,150,150', g: '⬬' }, gl: { fr: 'Galaxie lenticulaire', col: '255,150,150', g: '⬬' }, gi: { fr: 'Galaxie irrégulière', col: '255,150,150', g: '⬬' },
+  ge: { fr: 'Galaxie elliptique', col: '255,175,150', g: '⬮' }, oc: { fr: 'Amas ouvert', col: '255,226,120', g: '⁘' }, gc: { fr: 'Amas globulaire', col: '255,190,105', g: '⊕' },
+  pn: { fr: 'Nébuleuse planétaire', col: '120,240,170', g: '⊙' }, neb: { fr: 'Nébuleuse diffuse', col: '110,215,235', g: '▢' }, snr: { fr: 'Rémanent de supernova', col: '255,160,90', g: '✺' },
+  cloud: { fr: 'Nuage stellaire', col: '200,200,255', g: '░' }, dbl: { fr: 'Étoile double', col: '225,230,255', g: '‥' }, ast: { fr: 'Astérisme', col: '225,230,255', g: '⁙' }
+};
+const MES_KW = { gs: ['galaxie', 'galaxie spirale'], gl: ['galaxie', 'galaxie lenticulaire'], gi: ['galaxie', 'galaxie irreguliere'], ge: ['galaxie', 'galaxie elliptique'], oc: ['amas', 'amas ouvert'], gc: ['amas', 'amas globulaire'], pn: ['nebuleuse', 'nebuleuse planetaire'], neb: ['nebuleuse', 'nebuleuse diffuse'], snr: ['supernova'], cloud: ['nuage stellaire'], dbl: ['etoile double'], ast: ['asterisme'] };
+const mesLabel = o => 'M' + o.m;
+const mesTitle = o => o.n ? `M${o.m} · ${o.n}` : `M${o.m}${o.ngc ? ' · ' + o.ngc : ''}`;
+const mesSel = i => MES[i].xoI >= 0 && MES[i].xo === 'm1' ? { kind: 'xo', i: MES[i].xoI } : { kind: 'mes', i }; // M1 = la nébuleuse du Crabe des objets extrêmes (pas de doublon)
+function mesVis(mag) { return mag <= 5 ? ['ok', 'Œil nu (ciel noir)', 'oeil'] : mag <= 8.5 ? ['ok', 'Jumelles', 'jum'] : ['', 'Télescope', 'tel']; }
+function fmtSize(o) { const f = v => v >= 60 ? num(v / 60, 1) + '°' : v >= 10 ? Math.round(v) + '′' : num(v, 1) + '′'; return Math.abs(o.sz[0] - o.sz[1]) < 0.05 * o.sz[0] ? f(o.sz[0]) : `${f(o.sz[0])} × ${f(o.sz[1])}`; }
+MES.forEach((o, i) => {
+  const keys = [...o.k.map(fold), ...(o.n ? [fold(o.n)] : []), fold(o.tf), 'messier', ...MES_KW[o.t]];
+  if (o.xo === 'm1') { const e = INDEX.find(x => x.sel.kind === 'xo' && x.sel.i === o.xoI); if (e) { e.keys.push(...keys); e.sub += ' · M1 (Messier)'; } return; }
+  INDEX.push({ label: mesTitle(o), sub: `${o.tf} · ${consFr(o.con) || o.con} · mag ${num(o.mag, 1)} · catalogue de Messier`, keys, sel: { kind: 'mes', i }, rank: 1.4 });
+});
+let mesKey = '';
+function mesUpdate() { const k = frameKey; if (k === mesKey) return; mesKey = k; for (const o of MES) eqjToNEU(o.v3[0], o.v3[1], o.v3[2], o.neu); }
+function mesNEU(i) { mesUpdate(); return MES[i].neu; }
+function mesIcon(t, x, y, c) {
+  ctx.strokeStyle = `rgb(${c})`; ctx.fillStyle = `rgb(${c})`; ctx.lineWidth = 1.4; ctx.beginPath();
+  if (t === 'gs' || t === 'gl' || t === 'gi') { ctx.ellipse(x, y, 7.5, 3.2, -0.5, 0, 6.2832); ctx.stroke(); }
+  else if (t === 'ge') { ctx.ellipse(x, y, 6, 4.2, -0.5, 0, 6.2832); ctx.globalAlpha = 0.35; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke(); }
+  else if (t === 'oc') { ctx.setLineDash([1.6, 2.2]); ctx.arc(x, y, 6.5, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]); }
+  else if (t === 'gc') { ctx.arc(x, y, 5.5, 0, 6.2832); ctx.moveTo(x - 5.5, y); ctx.lineTo(x + 5.5, y); ctx.moveTo(x, y - 5.5); ctx.lineTo(x, y + 5.5); ctx.stroke(); }
+  else if (t === 'pn') { ctx.arc(x, y, 3.6, 0, 6.2832); ctx.moveTo(x - 7.5, y); ctx.lineTo(x - 3.6, y); ctx.moveTo(x + 3.6, y); ctx.lineTo(x + 7.5, y); ctx.moveTo(x, y - 7.5); ctx.lineTo(x, y - 3.6); ctx.moveTo(x, y + 3.6); ctx.lineTo(x, y + 7.5); ctx.stroke(); }
+  else if (t === 'neb') { ctx.rect(x - 5.5, y - 5.5, 11, 11); ctx.stroke(); }
+  else if (t === 'snr') { xoIcon('snr', x, y, c); }
+  else if (t === 'cloud') { ctx.setLineDash([1.5, 2.5]); ctx.rect(x - 7, y - 5, 14, 10); ctx.stroke(); ctx.setLineDash([]); }
+  else if (t === 'dbl') { ctx.arc(x - 3, y, 2, 0, 6.2832); ctx.moveTo(x + 5, y); ctx.arc(x + 3, y, 2, 0, 6.2832); ctx.fill(); }
+  else { for (const [dx, dy] of [[0, -4], [-4, 1], [3, 2], [0, 5]]) { ctx.moveTo(x + dx + 1.6, y + dy); ctx.arc(x + dx, y + dy, 1.6, 0, 6.2832); } ctx.fill(); }
+}
+const mesTmpA = [0, 0, 0], mesTmpB = [0, 0, 0];
+function mesAxisPx(o, x, y, rad, pa, out) { // extrémité d'un axe (rad, angle de position depuis le nord vers l'est) projetée à l'écran
+  const c = Math.cos(rad), s = Math.sin(rad), cp = Math.cos(pa * DEG), sp = Math.sin(pa * DEG);
+  for (let k = 0; k < 3; k++) mesTmpA[k] = o.v3[k] * c + (o.nv[k] * cp + o.ev[k] * sp) * s;
+  eqjToNEU(mesTmpA[0], mesTmpA[1], mesTmpA[2], mesTmpB);
+  if (!proj(mesTmpB[0], mesTmpB[1], mesTmpB[2])) return false;
+  out[0] = P.x - x; out[1] = P.y - y; return true;
+}
+const mesLab = [], mesLabF = [], mesAx1 = [0, 0], mesAx2 = [0, 0];
+function drawMessier(groundOn) {
+  const sel = S.selected, lz = LASER.target;
+  const selI = sel && sel.kind === 'mes' ? sel.i : -1, lzI = lz && lz.kind === 'mes' ? lz.i : -1;
+  if (!S.opts.messier && selI < 0 && lzI < 0) return;
+  mesUpdate();
+  const m1byXO = S.opts.extreme || (sel && sel.kind === 'xo') || (lz && lz.kind === 'xo'); // le Crabe est alors déjà dessiné par la couche « objets extrêmes »
+  const pxPerArcmin = V.s * DEG / 60, labNames = V.fovDeg < 40;
+  ctx.save(); ctx.font = '600 11px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  for (const i of MES_ORDER) {
+    if (!S.opts.messier && i !== selI && i !== lzI) continue;
+    const o = MES[i];
+    if (o.xo === 'm1' && m1byXO) continue;
+    const v = o.neu; if (groundOn && v[2] < -0.01) continue;
+    const semi = o.sz[0] / 2 * pxPerArcmin;
+    if (!proj(v[0], v[1], v[2]) || !onScreen(14 + semi)) continue;
+    const x = P.x, y = P.y, T = MES_T[o.t], c = T.col;
+    let rLab = 9;
+    if (semi >= 10) { // vraie taille et orientation (OpenNGC) quand l'objet est assez grand à l'écran
+      const pa = o.pa == null ? 0 : o.pa, r1 = o.sz[0] / 120 * DEG, r2 = (o.pa == null ? o.sz[0] : o.sz[1]) / 120 * DEG;
+      if (mesAxisPx(o, x, y, r1, pa, mesAx1) && mesAxisPx(o, x, y, r2, pa + 90, mesAx2)) {
+        const ra = Math.hypot(mesAx1[0], mesAx1[1]), rb = Math.hypot(mesAx2[0], mesAx2[1]), ang = Math.atan2(mesAx1[1], mesAx1[0]);
+        if (o.pa == null) { const rm = (o.sz[0] + o.sz[1]) / 4 * pxPerArcmin * (ra / Math.max(1e-6, semi)); ctx.beginPath(); ctx.arc(x, y, rm, 0, 6.2832); rLab = rm; }
+        else { ctx.beginPath(); ctx.ellipse(x, y, ra, Math.max(1, rb), ang, 0, 6.2832); rLab = Math.max(ra, rb); }
+        ctx.fillStyle = `rgba(${c},.07)`; ctx.fill(); ctx.strokeStyle = `rgba(${c},.75)`; ctx.lineWidth = 1.2;
+        if (o.t === 'oc' || o.t === 'cloud') ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+        if (rLab > 160) rLab = 9;
+      } else mesIcon(o.t, x, y, c);
+      if (rLab < 9) rLab = 9;
+    } else mesIcon(o.t, x, y, c);
+    picks.push(o.xo === 'm1' ? { kind: 'xo', i: o.xoI, x, y, r: 12, pri: -8 } : { kind: 'mes', i, x, y, r: Math.min(40, Math.max(12, rLab * 0.8)), pri: -7 });
+    (i === selI || i === lzI ? mesLabF : mesLab).push(i, x, y, rLab);
+  }
+  for (const [L, force] of [[mesLabF, true], [mesLab, false]]) {
+    for (let k = 0; k < L.length; k += 4) {
+      const o = MES[L[k]], x = L[k + 1], y = L[k + 2], dx = Math.min(L[k + 3] * 0.72, 60) + 3, lab = labNames && o.n ? `${mesLabel(o)} ${o.n}` : mesLabel(o), tw = textW(lab, ctx.font);
+      const lx = x + dx + tw > W - 4 ? Math.max(4, x - dx - tw) : x + dx; // reste lisible au bord droit
+      if (labelFits(lx, y - 7, tw, 14) || force) { ctx.fillStyle = `rgba(${MES_T[o.t].col},.9)`; ctx.fillText(lab, lx, y); }
+    }
+    L.length = 0;
+    if (V.fovDeg >= 120) { mesLab.length = 0; break; }
+  }
+  ctx.restore();
+}
+/* Nuit en cours : fenêtre noire (Soleil < −18°, sinon < −12°, sinon < −6°), matrices de rotation toutes les 10 min — calculé une fois par nuit et par lieu */
+let MESN = null;
+function mesNight() {
+  const ms = simMs(), nw = nightWindow(ms), key = nw.noon + '|' + S.loc.lat + '|' + S.loc.lon;
+  if (MESN && MESN.key === key) return MESN;
+  const t0 = A.MakeTime(new Date(nw.noon)); let nautEnd = null; try { nautEnd = msOf(A.SearchAltitude('Sun', observer, +1, t0, 1, -12)); } catch (e) {}
+  let a = null, b = null, lvl = '';
+  if (nw.astro && nw.astroEnd) { a = nw.astro; b = nw.astroEnd; lvl = 'nuit astronomique (Soleil < −18°)'; }
+  else if (nw.naut && nautEnd) { a = nw.naut; b = nautEnd; lvl = 'nuit nautique (Soleil < −12°, pas de nuit noire)'; }
+  else if (nw.civil && nw.civilEnd) { a = nw.civil; b = nw.civilEnd; lvl = 'crépuscule civil seulement (Soleil < −6°)'; }
+  const steps = [];
+  if (a) for (let t = a; t <= b + 1; t += 10 * 60000) steps.push({ t, m: A.Rotation_EQJ_HOR(A.MakeTime(new Date(t)), observer).rot });
+  MESN = { key, a, b, lvl, steps, best: new Array(MES.length), noon: nw.noon };
+  return MESN;
+}
+function mesBest(i) { // hauteur maximale pendant la fenêtre noire de la nuit
+  const N = mesNight(); if (N.best[i]) return N.best[i];
+  const v = MES[i].v3; let best = null;
+  for (const s of N.steps) {
+    const m = s.m, hx = m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2], hy = m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2], hz = m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2];
+    const alt = Math.asin(clamp(hz, -1, 1)) * RAD; if (!best || alt > best.alt) best = { alt, az: norm360(Math.atan2(-hy, hx) * RAD), t: s.t };
+  }
+  return (N.best[i] = best || { alt: -90, az: 0, t: null });
+}
+const MES_MIN_ALT = 15;
+function mesBestText(i, ms) {
+  const N = mesNight(), b = mesBest(i);
+  if (!N.a) return 'pas de nuit (Soleil toujours au-dessus de −6°)';
+  if (b.alt < MES_MIN_ALT) return b.alt < 0 ? 'non observable cette nuit (sous l\'horizon pendant la nuit)' : `trop bas cette nuit (${fmtDeg(b.alt, 0)} au mieux)`;
+  return `${hmRel(b.t, ms)} · ${fmtDeg(b.alt, 0)} ${cardinal(b.az)}${b.t <= N.a + 1 ? ' (dès la nuit tombée, puis il descend)' : b.t >= N.b - 600001 ? ' (en fin de nuit, avant l\'aube)' : ''}`;
+}
+function mesLinkHtml(o) {
+  if (o.xo === 'm87bh' && o.xoI >= 0) return `<button class="btn mini mes-link" data-goto="xo:${o.xoI}" type="button">◉ Son trou noir central : M87* (objets extrêmes) →</button>`;
+  return '';
+}
+function mesExtraRows(o, ms, i, noMag) {
+  const vis = mesVis(o.mag);
+  return `<dt>Catalogue de Messier</dt><dd>M${o.m}${o.ngc ? ' · ' + o.ngc : ''}</dd>${noMag ? '' : `<dt>Magnitude visuelle</dt><dd>${num(o.mag, 1)}</dd>`}<dt>Taille apparente</dt><dd>${fmtSize(o)}${o.pa != null ? ` · orientation ${Math.round(o.pa)}°` : ''}</dd>
+  <dt>Instrument</dt><dd>${vis[1]}</dd><dt>Meilleur moment ce soir</dt><dd>${mesBestText(i, ms)}</dd>`;
+}
+function mesInfoHtml(i, ms, upTag) {
+  const o = MES[i], T = MES_T[o.t], aa = neuToAltAz(mesNEU(i)), vis = mesVis(o.mag), r = riseTransitSet('star', o.ra / 15, o.de, ms), N = mesNight();
+  return `<h3><span class="xo-ico" style="color:rgb(${T.col})">${T.g}</span> ${mesTitle(o)}</h3><div class="sub">${o.tf} · ${consFr(o.con) || o.con} · catalogue de Messier</div>${upTag(aa.alt)}<span class="tag ${vis[0]}">${vis[1]}</span>
+  ${o.note ? `<p class="xo-desc">${o.note}</p>` : ''}${mesLinkHtml(o)}
+  <dl class="kv" style="margin-top:10px"><dt>Type</dt><dd>${o.tf}</dd><dt>Distance</dt><dd>${o.d}</dd>${mesExtraRows(o, ms, i)}
+  <dt>Asc. droite (J2000)</dt><dd>${fmtRA(o.ra / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(o.de)}</dd><dt>Altitude</dt><dd>${fmtDeg(aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(aa.az)} ${cardinal(aa.az)}</dd>${riseRows(r, ms)}
+  <dt>Sources</dt><dd>Position et axes : OpenNGC ; magnitude, taille, distance : SEDS (via Wikipédia) ; contrôlé avec SIMBAD</dd></dl>
+  <p class="fine">Nuit utilisée : ${N.a ? `${N.lvl}, ${hm(N.a)} → ${hm(N.b)}` : 'aucune'}. Instrument indicatif d'après la magnitude (≤ 5 œil nu, ≤ 8,5 jumelles) ; les objets étendus pâles demandent un ciel noir.</p>`;
+}
+function mesMarTick() { // nouvelle nuit (changement d'heure simulée) → liste recalculée
+  const ms = simMs(); let noon = localMidnight(ms) + 12 * 3600000; if (tzParts(ms).h < 12) noon -= 86400000;
+  if (noon !== MESN.noon) renderMarathon();
+}
+/* Marathon Messier : objets observables cette nuit (≥ 15° pendant la nuit), dans l'ordre où les viser */
+const MAR = { f: 'all' };
+function marathonList() {
+  const N = mesNight(), out = [];
+  for (let i = 0; i < MES.length; i++) { const b = mesBest(i); if (N.a && b.alt >= MES_MIN_ALT) out.push({ i, b }); }
+  return out.sort((p, q) => p.b.t - q.b.t || (p.b.t <= N.a + 1 ? p.b.alt - q.b.alt : q.b.alt - p.b.alt)); // à la tombée de la nuit : les plus bas (qui se couchent) d'abord
+}
+function renderMarathon() {
+  const el = $('mesList'); if (!el || $('panel-messier').classList.contains('hidden')) return;
+  const ms = simMs(), N = mesNight(), all = marathonList(), list = all.filter(r => MAR.f === 'all' || mesVis(MES[r.i].mag)[2] === MAR.f);
+  const cnt = k => all.filter(r => mesVis(MES[r.i].mag)[2] === k).length;
+  el.innerHTML = `<div class="muted" style="margin-bottom:6px">${S.loc.name} · ${N.a ? `${N.lvl} : <b>${hm(N.a)} → ${hm(N.b)}</b>` : 'pas de nuit à cette date'}</div>
+  <div class="mes-count"><b>${all.length}</b> / 110 objets observables cette nuit</div>
+  <div class="mes-chips">${[['all', 'Tous', all.length], ['oeil', 'Œil nu', cnt('oeil')], ['jum', 'Jumelles', cnt('jum')], ['tel', 'Télescope', cnt('tel')]].map(([k, l, n]) => `<button class="mchip${MAR.f === k ? ' on' : ''}" data-mf="${k}" type="button">${l} <small>${n}</small></button>`).join('')}</div>
+  <ul class="plist mes-list">${list.length ? list.map(({ i, b }) => { const o = MES[i], T = MES_T[o.t], v = mesVis(o.mag); return `<li data-mes="${i}"><span class="mes-g" style="color:rgb(${T.col})">${T.g}</span><div><div class="pname">${mesTitle(o)}</div><div class="pmeta">${T.fr} · ${consFr(o.con) || o.con} · mag ${num(o.mag, 1)} · ${v[1]}</div></div><div class="pright"><b>${hm(b.t)}</b><br><span class="muted">${fmtDeg(b.alt, 0)} · ${cardinal(b.az)}</span></div></li>`; }).join('') : '<li class="muted">Aucun objet de cette catégorie cette nuit.</li>'}</ul>
+  ${all.length < 110 ? `<div class="fine">Non observables cette nuit (sous ${MES_MIN_ALT}° pendant toute la nuit) : ${MES.map((o, i) => i).filter(i => !all.some(r => r.i === i)).map(i => 'M' + MES[i].m).join(', ')}.</div>` : ''}
+  <p class="fine">Ordre de passage = heure de hauteur maximale pendant la nuit (les objets bas à l'ouest au crépuscule d'abord). Le marathon complet (110 objets) n'est possible que vers mars-avril, autour de la nouvelle Lune, depuis les latitudes moyennes de l'hémisphère nord.</p>`;
+  el.querySelectorAll('[data-mf]').forEach(b => b.onclick = () => { MAR.f = b.dataset.mf; renderMarathon(); });
+  el.querySelectorAll('li[data-mes]').forEach(li => li.onclick = () => { const s = mesSel(+li.dataset.mes); if (window.innerWidth <= 720) $('panel-messier').classList.add('hidden'); goToObject(s); });
+}
 
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
 const laserActive = () => !!S.opts.laser;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
-const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' ? a.i === b.i : a.c === b.c);
+const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' || a.kind === 'mes' ? a.i === b.i : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
 function laserScore(sel, R) {
   if (sel.kind === 'xo') { const sep = sepDeg(xoNEU(sel.i)); return { sep, score: sep / R - 0.3 }; }
+  if (sel.kind === 'mes') { const sep = Math.max(0, sepDeg(mesNEU(sel.i)) - Math.min(MES[sel.i].sz[0] / 120, R * 0.5)); return { sep, score: sep / R - 0.25 }; }
   if (sel.kind === 'sat') { const c = satCur(sel.id); if (!c) return { sep: 999, score: 99 }; const sep = sepDeg(c); return { sep, score: sep / R - (c[4] ? 0.35 : 0) }; }
   if (sel.kind === 'body') {
     const bs = sky.bodies[sel.bi]; const sep = sepDeg(bs.neu) - bs.angRad * RAD;
@@ -1287,7 +1461,7 @@ function centreConstellation() {
 function updateLaser(now) {
   if (now - LASER.last < (AR.on ? 125 : 160)) return; // ~6-8 Hz
   // vue et ciel inchangés : inutile de refaire la recherche (sauf rafraîchissement lent du panneau)
-  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '') + (S.opts.extreme ? 'x' : '');
+  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '') + (S.opts.extreme ? 'x' : '') + (S.opts.messier ? 'm' : '');
   if (vk === LASER.vk && now - LASER.last < 1500) return;
   LASER.vk = vk; LASER.last = now;
   const prev = LASER.target;
@@ -1304,6 +1478,11 @@ function updateLaser(now) {
   if (S.opts.extreme) { xoUpdate(); for (let i = 0; i < XO.length; i++) { // objets extrêmes (prioritaires sur les étoiles proches)
     const v = XO[i].neu; if (groundOn && v[2] < 0) continue; const sep = sepDeg(v); if (sep > R * 1.2) continue;
     const sc = sep / R - 0.3; if (sc < bestScore) { bestScore = sc; best = { kind: 'xo', i }; }
+  } }
+  if (S.opts.messier) { mesUpdate(); for (let i = 0; i < MES.length; i++) { // catalogue de Messier (M1 → fiche du Crabe, sans doublon)
+    const o = MES[i]; if (o.xo === 'm1' && S.opts.extreme) continue;
+    const v = o.neu; if (groundOn && v[2] < 0) continue; const sep = Math.max(0, sepDeg(v) - Math.min(o.sz[0] / 120, R * 0.5)); if (sep > R * 1.2) continue;
+    const sc = sep / R - 0.25; if (sc < bestScore) { bestScore = sc; best = mesSel(i); }
   } }
   if (satOn()) for (const st of SAT.fine) { // satellites (éclairés en priorité sur les étoiles)
     if (!st.ok || (groundOn && st.cur[2] < 0)) continue;
@@ -1341,6 +1520,7 @@ function updateLaser(now) {
 }
 function distText(sel) {
   if (sel.kind === 'xo') return XO[sel.i].d;
+  if (sel.kind === 'mes') return MES[sel.i].d;
   if (sel.kind === 'sat') { const c = satCur(sel.id); return c ? `${Math.round(c[3]).toLocaleString('fr-FR')} km` : 'inconnue'; }
   if (sel.kind === 'star') {
     const ex = D.extra && D.extra[SHIP[sel.i]]; const pc = ex ? ex[0] : 0;
@@ -1378,6 +1558,16 @@ function renderLaserPanel(now) {
     <div class="lz-hint">Touchez pour la fiche complète</div>`;
     return;
   }
+  if (t.kind === 'mes') {
+    const o = MES[t.i], T = MES_T[o.t], aa = neuToAltAz(mesNEU(t.i)), r = riseTransitSet('star', o.ra / 15, o.de, ms), vis = mesVis(o.mag);
+    const rs = r.circumpolar ? 'circumpolaire' : r.never ? 'ne se lève pas' : `↑ ${hmRel(r.rise, ms)} · ↓ ${hmRel(r.set, ms)}`;
+    el.innerHTML = `<div class="lz-name"><span class="lz-dot on"></span><span class="xo-ico" style="color:rgb(${T.col})">${T.g}</span> ${mesTitle(o)}<small>${o.tf}</small></div>
+    <div class="lz-row"><span>${consFr(o.con) || o.con}</span><span>mag ${num(o.mag, 1)}</span><span>${fmtSize(o)}</span><span>${o.d}</span></div>
+    <div class="lz-row"><span class="lz-vis ${vis[0]}">${vis[1]}</span></div>
+    <div class="lz-row"><span>Alt ${fmtDeg(aa.alt, 1)} · Az ${fmtDeg(aa.az, 0)} ${cardinal(aa.az)}</span><span>${rs}</span></div>
+    <div class="lz-hint">Touchez pour la fiche complète</div>`;
+    return;
+  }
   if (t.kind === 'sat') {
     const I = satInfoParts(t.id); if (!I) { el.innerHTML = '<div class="lz-name">Satellite</div>'; return; }
     const np = I.aa.alt > 0 ? null : satNextPass(I.s);
@@ -1405,6 +1595,7 @@ function renderLaserPanel(now) {
   <div class="lz-row"><span>Alt ${fmtDeg(aa.alt, 1)} · Az ${fmtDeg(aa.az, 0)} ${cardinal(aa.az)}</span><span>${rs}</span></div>
   <div class="lz-hint">Touchez pour la fiche complète</div>`;
 }
+$('infoCard').addEventListener('click', e => { const b = e.target.closest('[data-goto]'); if (!b) return; const [k, i] = b.dataset.goto.split(':'); goToObject({ kind: k, i: +i }); });
 $('laserPanel').addEventListener('click', () => { if (LASER.target) { select({ ...LASER.target }); } });
 function syncLaserUI() {
   const on = !!S.opts.laser, b = $('laserBtn');
@@ -1437,7 +1628,7 @@ function drawLaser() {
   // cible
   const tg = LASER.target; let tx = null, ty = null;
   if (tg) {
-    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : tg.kind === 'xo' ? xoNEU(tg.i) : sky.bodies[tg.bi].neu;
+    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : tg.kind === 'xo' ? xoNEU(tg.i) : tg.kind === 'mes' ? mesNEU(tg.i) : sky.bodies[tg.bi].neu;
     if (proj(v[0], v[1], v[2])) {
       tx = P.x; ty = P.y;
       ctx.strokeStyle = 'rgba(110,255,160,.95)'; ctx.lineWidth = 1.6; ctx.shadowColor = '#3cff78'; ctx.shadowBlur = 8;
@@ -1462,17 +1653,18 @@ function selNEU(sel) {
   if (sel.kind === 'body') return sky.bodies[sel.bi].neu;
   if (sel.kind === 'sat') return satNEU(sel.id);
   if (sel.kind === 'xo') return xoNEU(sel.i);
+  if (sel.kind === 'mes') return mesNEU(sel.i);
   return eqjToNEU(sel.c.v[0], sel.c.v[1], sel.c.v[2], [0, 0, 0]);
 }
 const nextRiseCache = new Map();
 function nextRiseMs(sel) {
   if (sel.kind === 'sat') { const s = SAT.byId.get(sel.id); const p = s && SATLIB ? satNextPass(s) : null; return p ? p.rise : null; }
   const ms = simMs();
-  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : sel.kind === 'xo' ? 'x' + sel.i : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
+  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : sel.kind === 'xo' ? 'x' + sel.i : sel.kind === 'mes' ? 'm' + sel.i : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
   if (nextRiseCache.has(key)) return nextRiseCache.get(key);
   let body;
   if (sel.kind === 'body') body = BODIES[sel.bi].key;
-  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.kind === 'xo' ? XO[sel.i].ra / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.kind === 'xo' ? XO[sel.i].de : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
+  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.kind === 'xo' ? XO[sel.i].ra / 15 : sel.kind === 'mes' ? MES[sel.i].ra / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.kind === 'xo' ? XO[sel.i].de : sel.kind === 'mes' ? MES[sel.i].de : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
   let r = null; try { r = msOf(A.SearchRiseSet(body, observer, +1, A.MakeTime(new Date(ms)), 2)); } catch (e) {}
   if (nextRiseCache.size > 200) nextRiseCache.clear();
   nextRiseCache.set(key, r); return r;
@@ -1486,7 +1678,7 @@ function goToObject(sel) {
   const { alt, az } = objAltAz(sel);
   if (AR.on) { setGuideTarget(sel); return; }
   const key = sel.kind === 'body' ? BODIES[sel.bi].key : '';
-  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : sel.kind === 'xo' ? 30 : 40;
+  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : sel.kind === 'xo' ? 30 : sel.kind === 'mes' ? clamp(MES[sel.i].sz[0] / 60 * 5, 6, 40) : 40;
   S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(az, S.az * RAD) * DEG, alt1: clamp(alt, -89, 89) * DEG, fov1: fovT * DEG };
   select(sel);
   if (sel.kind !== 'con' && laserActive()) { LASER.pin = sel; LASER.target = sel; LASER.key = ''; LASER.vk = ''; }
@@ -2095,6 +2287,7 @@ $('satCountry').onchange = e => {
   if (S.selected && S.selected.kind === 'sat' && !satPassesFilter(SAT.byId.get(S.selected.id))) select(null);
   if (!$('panel-sats').classList.contains('hidden')) renderPasses();
 };
+$('mesMarBtn').onclick = () => { openPanel('messier', true); renderMarathon(); };
 $('satPassBtn').onclick = () => { openPanel('sats', true); satEnsureData(); startPassJob(); };
 /* ---------------- Pays / organisation propriétaire (CelesTrak SATCAT, champ OWNER) ---------------- */
 // code SATCAT → [drapeau, nom français] ; liste complète des codes CelesTrak (satcat/sources.php)
@@ -2215,6 +2408,7 @@ function frame(now) {
   if (AR.on && now - Q.lastRender < 31) { updateClock(); return; }
   if (AR.on) { updateAR(now); S.dirty = true; }
   const changed = updateSky(false);
+  if (changed && MESN && !$('panel-messier').classList.contains('hidden')) mesMarTick();
   satTick(now);
   const las = laserActive();
   if (las || AR.on) setupView();
@@ -2265,6 +2459,8 @@ window.__celeste = {
   sat: () => { const s = SAT.byId.get(25544), c = s && satCur(25544); return { adv: SAT.adv, opts: { ...SAT.opts }, groups: Object.fromEntries(Object.entries(SAT.g).map(([k, v]) => [k, { n: v.list.length, state: v.state, note: v.note }])), fine: SAT.fine.length, drawn: SAT.drawn, cand: SAT.cand.length, iss: c ? { ...neuToAltAz(c), range: c[3], lit: c[4], mag: c[5], speed: c[6] } : null, passes: SAT.passes ? SAT.passes.length : null, passJob: !!SAT.passJob }; },
   owner: id => ownerOf(SAT.byId.get(id)), ownStats: () => ({ known: OWN.byId.size, g: JSON.parse(JSON.stringify(OWN.g)), ver: OWN.ver, lazy: [...OWN.lazy] }),
   fineOwn: () => [...new Set(SAT.fine.map(ownFilterKey))],
+  mes: () => ({ n: MES.length, on: !!S.opts.messier, list: MES.map((o, i) => ({ i, m: o.m, n: o.n, t: o.t, ra: o.ra, de: o.de, ...neuToAltAz(mesNEU(i)) })) }),
+  mesNight: () => { const N = mesNight(); return { a: N.a, b: N.b, lvl: N.lvl, steps: N.steps.length }; }, mesBest: i => mesBest(i), marathon: () => marathonList().map(r => ({ m: MES[r.i].m, t: r.b.t, alt: r.b.alt })),
   xo: () => ({ n: XO.length, on: !!S.opts.extreme, list: XO.map((o, i) => ({ i, id: o.id, n: o.n, t: o.t, ...neuToAltAz(xoNEU(i)) })) }),
   satPasses: () => (SAT.passes || []).map(p => ({ id: p.s.id, own: ownerShort(p.s), code: ownFilterKey(p.s), name: p.s.short, rise: p.rise, max: p.max, set: p.set, maxEl: p.maxEl, azR: p.azR, azM: p.azM, azS: p.azS, mag: p.mag, iss: p.s.iss })),
   satAt: (id, ms) => { const s = SAT.byId.get(id); if (!s) return null; obSetup(); const d = new Date(ms), o = new Float64Array(7); if (!satState(s, d, SATLIB.gstime(d), sunEci(ms), o)) return null; const pv = SATLIB.propagate(s.rec, d), g = SATLIB.eciToGeodetic(pv.position, SATLIB.gstime(d)); return { ...neuToAltAz(o), range: o[3], lit: o[4], lat: g.latitude * RAD, lon: g.longitude * RAD, h: g.height }; },

@@ -39,6 +39,11 @@ Au premier lancement, iOS demande l'accès « Mouvement et orientation » puis l
 - Icône distincte par type, sélection au toucher, au laser et par la recherche (même couche désactivée). Fiche en français : type, distance, masse, magnitude et visibilité (œil nu / jumelles / télescope / invisible), description, sources.
 - Coordonnées : SIMBAD (ICRS/J2000) ; pulsars : catalogue ATNF v2.6.1 ; distances et masses : publications citées dans chaque fiche (`extreme.js`).
 
+## Catalogue de Messier (M1–M110)
+Calques → « Catalogue de Messier » : les 110 objets avec un symbole par type (galaxie, amas ouvert/globulaire, nébuleuse diffuse/planétaire, rémanent, nuage stellaire M24, étoile double M40, astérisme M73). En zoomant, les grands objets sont tracés à leur vraie taille et, pour les galaxies, à leur vraie orientation (OpenNGC). Recherche « M31 », « Messier 31 », « NGC 224 » ou un nom (Andromède, Pléiades, Haltère/Dumbbell, Anneau, Tourbillon, Sombrero…), sélection au laser, fiche avec instrument conseillé, meilleur moment de la nuit, lever/coucher. « Marathon Messier » (Calques ou Ce soir) : objets à plus de 15° pendant la nuit, dans l'ordre où les viser.
+M1 n'est pas dupliqué : c'est la nébuleuse du Crabe de la couche « Objets extrêmes », complétée par ses données Messier ; la fiche de M87 renvoie à son trou noir M87*. M102 : identification débattue, on retient NGC 5866 (galaxie du Fuseau).
+Données : messier.js, généré par astro-app-build/messier/build.py (positions OpenNGC, validées automatiquement contre SIMBAD, Wikipédia/SEDS et d3-celestial : écart maximal 0,25° pour M45, sous la tolérance de la moitié de la taille de l'objet ; magnitude = médiane des sources).
+
 ## Fichiers
 `index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `LICENSES.txt`.
 

@@ -296,3 +296,13 @@ body.lite #arGuide{background:rgba(24,19,4,.93)}
 .xo-ico{font-weight:700}
 .xo-desc{margin:10px 0 8px;font-size:14px;line-height:1.45;color:#dfe6ff}
 .lz-vis{font-size:12.5px}.lz-vis.ok{color:#9ff0b5}.lz-vis.no{color:#ffb4a8}
+/* v9 — catalogue de Messier */
+#mesMarBtn{width:100%;margin:2px 0 10px}
+.mes-count{font-size:15px;margin:2px 0 8px}
+.mes-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.mchip{min-height:36px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:inherit;font:inherit;font-size:13px}
+.mchip.on{background:rgba(122,162,255,.28);border-color:rgba(122,162,255,.6)}
+.mchip small{opacity:.7;margin-left:3px}
+.mes-list li{cursor:pointer}
+.mes-g{font-size:18px;width:22px;text-align:center;flex:none;font-weight:700}
+.mes-link{display:block;width:100%;margin:8px 0 2px;text-align:left;font-size:13px}

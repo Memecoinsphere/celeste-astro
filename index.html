@@ -107,6 +107,9 @@
       <label><input type="checkbox" data-opt="laser"> Pointeur laser (carte et mode caméra)</label>
       <label><input type="checkbox" data-opt="extreme"> Objets extrêmes (trous noirs, supernovae, pulsars…)</label>
       <div class="xo-legend" aria-hidden="true"><span style="color:rgb(190,140,255)">◉ trou noir</span><span style="color:rgb(255,160,90)">✺ supernova</span><span style="color:rgb(110,225,255)">⊘ pulsar</span><span style="color:rgb(255,110,200)">∞ magnétar</span><span style="color:rgb(255,235,140)">◆ quasar</span><span style="color:rgb(255,120,100)">✩ étoile extrême</span></div>
+      <label><input type="checkbox" data-opt="messier"> Catalogue de Messier (M1–M110)</label>
+      <div class="xo-legend mes-legend" aria-hidden="true"><span style="color:rgb(255,150,150)">⬬ galaxie</span><span style="color:rgb(255,226,120)">⁘ amas ouvert</span><span style="color:rgb(255,190,105)">⊕ amas globulaire</span><span style="color:rgb(110,215,235)">▢ nébuleuse</span><span style="color:rgb(120,240,170)">⊙ planétaire</span><span style="color:rgb(255,160,90)">✺ rémanent</span><span style="color:rgb(225,230,255)">‥ double · ⁙ astérisme</span></div>
+      <button id="mesMarBtn" class="btn" type="button">Marathon Messier : visibles cette nuit</button>
       <div id="satSection" class="sat-section hidden">
         <div class="sect">Satellites <span class="adv-tag">mode avancé</span></div>
         <label><input type="checkbox" data-sat="iss"> ISS (station spatiale internationale)</label>
@@ -128,6 +131,11 @@
       <div id="satPassList"></div>
       <p class="fine">Passages visibles depuis votre lieu : satellite éclairé par le Soleil pendant que le ciel est sombre (Soleil sous −6°), hauteur maximale ≥ 10°. Touchez un passage pour régler l'heure sur son maximum et viser le satellite. Orbites : CelesTrak (TLE), calcul SGP4 (satellite.js).</p>
     </div>
+  </section>
+
+  <section id="panel-messier" class="panel hidden">
+    <div class="panel-head"><h2>Marathon Messier · cette nuit</h2><button class="close" data-close="panel-messier" aria-label="Fermer">×</button></div>
+    <div class="panel-body"><div id="mesList"></div></div>
   </section>
 
   <section id="panel-location" class="panel hidden">
@@ -177,6 +185,7 @@
 <script src="skydata.js"></script>
 <script src="satellite.min.js"></script>
 <script src="extreme.js"></script>
+<script src="messier.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
