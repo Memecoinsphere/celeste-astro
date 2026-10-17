@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05070d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Céleste — Carte du ciel</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<div id="app">
+  <video id="camera" playsinline muted autoplay></video>
+  <canvas id="sky"></canvas>
+
+  <header id="topbar">
+    <div class="brand"><span class="logo">✦</span><span class="brand-name">Céleste</span></div>
+    <div class="search">
+      <input id="searchInput" type="search" placeholder="Rechercher : Véga, Mars, Orion…" autocomplete="off" spellcheck="false" aria-label="Rechercher un astre">
+      <ul id="searchResults" class="hidden"></ul>
+    </div>
+    <button id="locBtn" class="chip" title="Lieu d'observation"><svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span id="locLabel">La Rochelle</span></button>
+  </header>
+
+  <nav id="sidebar">
+    <button class="fab" data-panel="tonight" title="Ce soir"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><span class="lbl">Ce soir</span></button>
+    <button class="fab" data-panel="forecast" title="Prévisions"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.2 9.2 4.4 4.4 0 0 0 7 18z"/></svg><span class="lbl">Météo</span></button>
+    <button class="fab" data-panel="layers" title="Affichage"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="lbl">Calques</span></button>
+    <button class="fab" id="arBtn" title="Mode caméra"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="lbl">Caméra</span></button>
+    <button class="fab" id="nightBtn" title="Mode nuit (rouge)"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg><span class="lbl">Nuit</span></button>
+  </nav>
+
+  <div id="hud">
+    <div id="viewInfo"></div>
+  </div>
+
+  <footer id="timebar">
+    <div class="time-row">
+      <button id="nowBtn" class="chip accent" title="Revenir à maintenant">Maintenant</button>
+      <div id="clock"><div id="clockTime">--:--</div><div id="clockDate">—</div></div>
+      <div class="speed">
+        <button class="sbtn" data-step="-86400" title="-1 jour">−1j</button>
+        <button class="sbtn" data-step="-3600" title="-1 heure">−1h</button>
+        <button id="playBtn" class="sbtn play" title="Lecture / pause">▶</button>
+        <button class="sbtn" data-step="3600" title="+1 heure">+1h</button>
+        <button class="sbtn" data-step="86400" title="+1 jour">+1j</button>
+        <select id="speedSel" title="Vitesse de lecture">
+          <option value="1">×1</option>
+          <option value="60">×60</option>
+          <option value="600" selected>×600</option>
+          <option value="3600">×3600</option>
+          <option value="86400">×1 j/s</option>
+          <option value="-600">−×600</option>
+        </select>
+      </div>
+    </div>
+    <div class="slider-row">
+      <span class="smin">−3 j</span>
+      <input id="timeSlider" type="range" min="-4320" max="4320" step="5" value="0" aria-label="Décalage temporel">
+      <span class="smax">+3 j</span>
+      <span id="offsetLabel">±0</span>
+    </div>
+  </footer>
+
+  <!-- Fiche objet -->
+  <section id="infoCard" class="card hidden" aria-live="polite">
+    <button class="close" data-close="infoCard" aria-label="Fermer">×</button>
+    <div id="infoContent"></div>
+  </section>
+
+  <!-- Panneaux -->
+  <section id="panel-tonight" class="panel hidden">
+    <div class="panel-head"><h2>Ce soir</h2><button class="close" data-close="panel-tonight" aria-label="Fermer">×</button></div>
+    <div id="tonightContent" class="panel-body"></div>
+  </section>
+
+  <section id="panel-forecast" class="panel wide hidden">
+    <div class="panel-head"><h2>Conditions d'observation · 7 jours</h2><button class="close" data-close="panel-forecast" aria-label="Fermer">×</button></div>
+    <div class="panel-body">
+      <div id="forecastStatus" class="muted"></div>
+      <div class="chart-wrap"><canvas id="forecastChart"></canvas></div>
+      <div class="legend">
+        <span><i class="q q0"></i>0 bouché</span><span><i class="q q2"></i>2 médiocre</span><span><i class="q q3"></i>3 correct</span><span><i class="q q4"></i>4 bon</span><span><i class="q q5"></i>5 excellent</span><span><i class="nightsw"></i>nuit astronomique</span>
+      </div>
+      <div id="forecastNights"></div>
+      <p class="fine">Indice de qualité du ciel (0–5) calculé à partir de la couverture nuageuse (basse/moyenne/haute), de l'humidité, de la visibilité, du vent et des précipitations. Données <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0).</p>
+    </div>
+  </section>
+
+  <section id="panel-layers" class="panel hidden">
+    <div class="panel-head"><h2>Affichage</h2><button class="close" data-close="panel-layers" aria-label="Fermer">×</button></div>
+    <div class="panel-body toggles">
+      <label><input type="checkbox" data-opt="lines" checked> Lignes des constellations</label>
+      <label><input type="checkbox" data-opt="conNames" checked> Noms des constellations</label>
+      <label><input type="checkbox" data-opt="starNames" checked> Noms des étoiles</label>
+      <label><input type="checkbox" data-opt="grid"> Grille alt-azimutale</label>
+      <label><input type="checkbox" data-opt="eqGrid"> Équateur céleste</label>
+      <label><input type="checkbox" data-opt="ecliptic" checked> Écliptique</label>
+      <label><input type="checkbox" data-opt="milkyway" checked> Voie lactée</label>
+      <label><input type="checkbox" data-opt="ground" checked> Sol opaque</label>
+      <label><input type="checkbox" data-opt="atmosphere" checked> Atmosphère (ciel de jour)</label>
+      <div class="field"><span>Magnitude limite</span><input id="magLimit" type="range" min="3" max="6.5" step="0.1" value="6"><b id="magLimitVal">6.0</b></div>
+    </div>
+  </section>
+
+  <section id="panel-location" class="panel hidden">
+    <div class="panel-head"><h2>Lieu d'observation</h2><button class="close" data-close="panel-location" aria-label="Fermer">×</button></div>
+    <div class="panel-body">
+      <button id="geoBtn" class="btn accent">Utiliser ma position (GPS)</button>
+      <div id="geoStatus" class="muted"></div>
+      <div class="grid2">
+        <label>Nom<input id="locName" type="text" value="La Rochelle"></label>
+        <label>Fuseau horaire<select id="tzSel"></select></label>
+        <label>Latitude (°N)<input id="latInput" type="number" step="0.0001" min="-90" max="90" value="46.16"></label>
+        <label>Longitude (°E)<input id="lonInput" type="number" step="0.0001" min="-180" max="180" value="-1.15"></label>
+      </div>
+      <div class="row-btns">
+        <button id="locApply" class="btn accent">Appliquer</button>
+        <button id="locReset" class="btn">La Rochelle</button>
+      </div>
+      <p class="fine">Latitude positive au nord, longitude positive à l'est (La Rochelle : 46,16 N ; −1,15 E).</p>
+    </div>
+  </section>
+
+  <!-- Barre AR -->
+  <div id="arBar" class="hidden">
+    <div id="arMsg"></div>
+    <div class="ar-controls">
+      <label>Champ <input id="arFov" type="range" min="40" max="90" step="1" value="66"><b id="arFovVal">66°</b></label>
+      <label>Cap <input id="arHead" type="range" min="-30" max="30" step="1" value="0"><b id="arHeadVal">0°</b></label>
+      <button id="arExit" class="btn accent">Quitter</button>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+</div>
+<div id="redFilter"></div>
+<script src="astronomy.browser.min.js"></script>
+<script src="skydata.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
