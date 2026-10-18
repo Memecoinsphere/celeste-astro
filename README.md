@@ -67,6 +67,38 @@ Bouton « Agenda » (barre de droite) ou « Ce soir » → « Calendrier du ciel
 
 Filtres par type. Toucher un événement règle l'heure sur le meilleur moment pour regarder (ciel noir, astre le plus haut) et vise l'astre (ou le radiant, marqué sur la carte). Une éclipse remplace la phase de Lune du même jour : pas de doublon. Vérifié contre la NASA pour 2026–2027 : les 5 éclipses (6 févr., 20 févr., 18 juil., 2 août, 17 août 2027) à 1 minute près ; oppositions d'Uranus (25 nov. 2026), de Jupiter (11 févr. 2027), de Mars (19 févr. 2027) et de Neptune (28 sept. 2027) ; solstices et équinoxes.
 
+## Ciel en direct (GPS + boussole)
+« Ce soir » › **📡 Ciel en direct** (ou Lieu › « GPS en continu »).
+- **GPS en continu** (`watchPosition`, haute précision) : la précision s'affiche (« GPS ± 9 m » dans la pastille du lieu et en mode caméra). Le ciel n'est recalculé que si vous bougez de plus de 500 m. En cas de refus, Céleste explique où autoriser la localisation (iPhone / Android) et garde la ville enregistrée.
+- **Boussole sur la carte** : un cône orange montre où vise le téléphone, même sans le mode caméra (mêmes capteurs et même mode « sans gyroscope » que le mode caméra). Option « La carte suit la direction du téléphone » ; faire glisser la carte arrête le suivi.
+- **Autour de moi** : les objets les plus intéressants (Lune, planètes, étoiles brillantes, Messier, Caldwell si chargé, ISS si activée) dans la direction visée, avec « 12° à gauche, 5° plus haut ».
+
+## Mode caméra : améliorations v14
+Messier (mag ≤ 7) et Caldwell brillants toujours superposés (option dans Calques), noms avec contour sombre lisibles sur la vidéo, moins de noms d'étoiles (désencombrement), zone de toucher élargie pour identifier un objet, GPS en direct si déjà autorisé. 30 images/s maximum, comme avant.
+
+## Rappels (notifications) et export calendrier
+Calendrier › **🔔 Rappels** : choix des types (éclipses, étoiles filantes, rapprochements, planètes, Lune, saisons, ISS en mode avancé) et du délai (15 min, 1 h, 3 h, 1 jour). Sans serveur push, voici ce qui est réellement possible :
+
+| | iPhone (Safari) | Android (Chrome) |
+|---|---|---|
+| Notification quand Céleste est ouverte / revient au premier plan | seulement si Céleste est **ajoutée à l'écran d'accueil** (iOS 16.4+) | oui |
+| Notification en arrière-plan (app fermée) | non garanti (iOS ne réveille pas une web-app sans serveur push) | quelques fois par jour si Céleste est **installée** (synchronisation périodique), heure non garantie |
+| Notification programmée à la minute près | non | seulement si le navigateur propose les « Notification Triggers » (expérimental) |
+| **Export .ics « Ajouter à mon calendrier »** (rappel à l'heure exacte) | **oui** (Calendrier + alarme) | **oui** (Google Agenda, etc.) |
+
+L'export .ics (un événement avec 📅, ou « Tout ajouter au calendrier ») est la solution fiable partout : les alarmes choisies y sont incluses.
+
+## Mode observation
+« Ce soir » › **🔭 Mode observation** : chronomètre, compte à rebours (adaptation à l'obscurité 20 min, 5/10/30 min), écran rouge forcé, écran maintenu allumé (Wake Lock), plan de la nuit (Lune, planètes, Messier les plus brillants) à cocher avec notes, ajout du dernier objet sélectionné. Journal gardé sur le téléphone, exportable en .txt, .csv ou .json. La pastille ⏱ en haut à gauche rouvre la séance.
+
+## Dispositions de l'écran (v15)
+Trois dispositions, à changer à tout moment dans Calques › « Disposition de l'écran » (ou dans le menu), mémorisées sur l'appareil. On peut aussi les forcer par l'adresse :
+- `?layout=onglets` : barre d'onglets en bas (Ciel, Chercher, Ce soir, Calques, Plus). Chaque onglet ouvre une seule feuille ; le ciel reste visible au-dessus.
+- `?layout=lateral` : bouton ☰ qui ouvre un menu latéral classé par sections ; la fonction choisie s'ouvre dans un panneau latéral qui remplace le menu (« ‹ Menu » pour revenir).
+- `?layout=classique` : la disposition d'origine (boutons à droite).
+
+Dans « onglets » et « menu latéral », la fiche d'un astre s'amarre en bas (à gauche en paysage) sans recouvrir les boutons, et la colonne de droite ne garde que l'essentiel : caméra, laser (et STOP quand un télescope est connecté). Mode caméra et mode télescope masquent la barre d'onglets et le menu.
+
 ## Téléphones sans gyroscope (ex. Samsung Galaxy A15)
 
 Détection automatique (`devicemotion` sans `rotationRate`, ou orientation très bruitée) : badge discret **« Mode sans gyroscope »** dans le mode caméra ; le toucher affiche des conseils (faire un « 8 », retirer une coque aimantée, s'éloigner du métal) et un réglage Auto / Toujours / Jamais. Dans ce mode, l'orientation est refusionnée à partir de la gravité (accéléromètre → hauteur/inclinaison) et du cap boussole : filtre passe-bas adaptatif (fort à l'arrêt, rapide en mouvement), indépendant de la fréquence d'images, zone morte douce anti-tremblement, cap traité par angle signé (pas de saut 0/360°), rejet des pics magnétiques. Les téléphones avec gyroscope gardent le comportement habituel.

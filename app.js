@@ -538,6 +538,7 @@ function render() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   picks.length = 0; nLB = 0; nVS = 0;
   const camOn = AR.on && AR.camera;
+  const halo = camOn ? (t, x, y) => { ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(0,0,0,.72)'; ctx.strokeText(t, x, y); } : null; // contour sombre : lisible sur l'image de la caméra
   if (camOn) { ctx.clearRect(0, 0, w, h); ctx.fillStyle = 'rgba(0,4,16,.25)'; ctx.fillRect(0, 0, w, h); }
   else {
     const [r, g, b] = skyColors();
@@ -634,17 +635,17 @@ function render() {
   let font = '600 13px system-ui,sans-serif'; ctx.font = font;
   for (const [name, x, y, r, key] of bodyLabels) {
     const tw = textW(name, font);
-    if (labelFits(x + r + 5, y - 8, tw, 16) || key === 'Moon' || key === 'Sun') { ctx.fillStyle = key === 'Sun' ? '#ffe39a' : key === 'Moon' ? '#f2efe4' : '#ffd9a0'; ctx.fillText(name, x + r + 5, y); }
+    if (labelFits(x + r + 5, y - 8, tw, 16) || key === 'Moon' || key === 'Sun') { if (halo) halo(name, x + r + 5, y); ctx.fillStyle = key === 'Sun' ? '#ffe39a' : key === 'Moon' ? '#f2efe4' : '#ffd9a0'; ctx.fillText(name, x + r + 5, y); }
   }
   if (S.opts.starNames) {
-    const lab = Math.min(clamp(1.5 + 1.6 * Math.log2(100 / V.fovDeg), 1.5, 4.8) * L.lab, lim);
+    const lab = Math.min(clamp(1.5 + 1.6 * Math.log2(100 / V.fovDeg), 1.5, 4.8) * L.lab, lim) - (AR.on ? 0.7 : 0); // mode caméra : moins de noms (désencombrement)
     font = '12px system-ui,sans-serif'; ctx.font = font;
     ctx.fillStyle = camOn ? 'rgba(235,240,255,.95)' : 'rgba(200,214,245,.78)';
     for (let k = 0; k < nVS; k++) { // les étoiles visibles sont déjà triées par magnitude
       const i = VS_I[k]; if (SMAG[i] > lab) break;
       const n = D.names[SHIP[i]]; if (!n || !n[0]) continue;
       const tw = textW(n[0], font), x = VS_X[k] + VS_R[k] + 4, y = VS_Y[k];
-      if (labelFits(x, y - 7, tw, 14)) ctx.fillText(n[0], x, y);
+      if (labelFits(x, y - 7, tw, 14)) { if (halo) { halo(n[0], x, y); ctx.fillStyle = 'rgba(235,240,255,.95)'; } ctx.fillText(n[0], x, y); }
     }
   }
   if (S.opts.conNames) {
@@ -662,12 +663,14 @@ function render() {
       const txt = c.up || (c.up = c.fr.toUpperCase());
       const tw = textW(txt, font) + txt.length * 1.2 + 10;
       if (!labelFits(P.x - tw / 2, P.y - 8, tw, 16)) continue;
+      if (halo) { halo(txt, P.x, P.y); ctx.fillStyle = 'rgba(170,200,255,.85)'; }
       ctx.fillText(txt, P.x, P.y);
       picks.push({ kind: 'con', c, x: P.x, y: P.y, r: tw / 2, pri: 50 });
     }
     if (ls) ctx.letterSpacing = '0px';
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  drawHeading();
   drawSelection();
   drawLaser(); drawGuide(); drawCalReticle();
   if (window.CELESTE_TEL) window.CELESTE_TEL.draw(ctx, projEqj);
@@ -809,7 +812,7 @@ cv.addEventListener('pointermove', e => {
   if (gesture.kind === 'drag' && pointers.size === 1) {
     gesture.moved += Math.abs(dx) + Math.abs(dy);
     if (AR.on) return;
-    if (gesture.moved > 4) { cv.classList.add('dragging'); LASER.pin = null; }
+    if (gesture.moved > 4) { cv.classList.add('dragging'); LASER.pin = null; if (LIVE.follow) { LIVE.follow = false; syncFollowUI(); toast('Suivi du téléphone suspendu (carte déplacée à la main)', 2500); } }
     S.az -= dx / V.s / Math.max(0.35, Math.cos(S.alt));
     S.alt = clamp(S.alt + dy / V.s, -89.9 * DEG, 89.9 * DEG);
     S.dirty = true; save();
@@ -836,7 +839,7 @@ window.addEventListener('keydown', e => {
   if (k) { k(); S.dirty = true; save(); }
 });
 function handleTap(x, y, touch) {
-  const th = touch ? 26 : 16; let best = null, bd = 1e9;
+  const th = AR.on ? (touch ? 40 : 30) : touch ? 26 : 16; let best = null, bd = 1e9; // mode caméra : l'image bouge un peu, zone de toucher plus large
   for (let k = 0; k < nVS; k++) {
     const r = VS_R[k], d = Math.hypot(VS_X[k] - x, VS_Y[k] - y) - r * 0.6;
     const score = d + SMAG[VS_I[k]] * 1.6;
@@ -852,7 +855,9 @@ function handleTap(x, y, touch) {
   if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : best.kind === 'dso' ? { kind: 'dso', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
+var lastSel = null;
 function select(s) {
+  if (s) lastSel = s;
   S.selected = s; S.mark = null; if (s && !S.telmode) closePanels(); // un seul panneau à la fois : la fiche remplace le panneau ouvert
   if (window.CELESTE_TEL) window.CELESTE_TEL.onSelect(s); renderInfo(); S.dirty = true; syncHistory();
 }
@@ -943,7 +948,7 @@ let toastTimer = 0;
 function toast(msg, ms = 4200) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms); }
 
 /* ---------------- Panneaux ---------------- */
-var PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier', 'calendar'];
+var PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier', 'calendar', 'live', 'session', 'find', 'more', 'menu'];
 function openPanel(name, forceOpen) {
   const el = $('panel-' + name); const willOpen = forceOpen || el.classList.contains('hidden');
   PANELS.forEach(n => $('panel-' + n).classList.toggle('hidden', !(n === name && willOpen)));
@@ -954,6 +959,9 @@ function openPanel(name, forceOpen) {
   if (name === 'tonight') renderTonight();
   if (name === 'forecast') loadForecast();
   if (name === 'calendar') { kalEnsure(); renderKal(); }
+  if (name === 'live') { renderLive(); LIVE.nearKey = ''; renderNear(); }
+  if (name === 'session') renderSes();
+  if (name === 'more' || name === 'menu') renderMenus();
 }
 function openPanelName() { return (PANELS || []).find(n => !$('panel-' + n).classList.contains('hidden')) || null; }
 function closePanels() { if (!openPanelName()) return; PANELS.forEach(n => $('panel-' + n).classList.add('hidden')); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); syncHistory(); }
@@ -961,7 +969,7 @@ function closeAll() { closePanels(); if (S.selected) select(null); closeSearch()
 /* Bouton « retour » (Android, geste iPhone) et Échap : ferment la couche du dessus (mode télescope, panneau ou fiche) */
 var histSkip = false, histT = 0;
 function overlayOpen() { return !!(S.telmode || openPanelName() || S.selected); }
-function syncHistory() { clearTimeout(histT); histT = setTimeout(() => {
+function syncHistory() { try { syncTabs(); } catch (e) {} clearTimeout(histT); histT = setTimeout(() => {
   if (histSkip) return; const st = history.state && history.state.ov;
   try { if (overlayOpen() && !st) history.pushState({ ov: 1 }, ''); else if (!overlayOpen() && st) { histSkip = true; history.back(); } } catch (e) {}
 }, 0); }
@@ -980,6 +988,7 @@ window.addEventListener('keydown', e => {
 });
 document.querySelectorAll('.fab[data-panel]').forEach(b => b.onclick = () => openPanel(b.dataset.panel));
 $('locBtn').onclick = () => openPanel('location');
+document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openPanel(b.dataset.open, true));
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
   const id = b.dataset.close;
   if (id === 'infoCard') select(null); else { $(id).classList.add('hidden'); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); syncHistory(); }
@@ -1001,13 +1010,15 @@ const deviceTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().t
 const TZS = [...new Set(['Europe/Paris', deviceTz, 'UTC', 'Europe/London', 'Europe/Brussels', 'Europe/Zurich', 'America/Montreal', 'America/New_York', 'America/Martinique', 'America/Guadeloupe', 'America/Cayenne', 'Indian/Reunion', 'Indian/Mayotte', 'Pacific/Noumea', 'Pacific/Tahiti', 'Africa/Casablanca', 'Africa/Dakar', 'Asia/Tokyo', 'Australia/Sydney'].filter(validTz))];
 $('tzSel').innerHTML = TZS.map(t => `<option value="${t}">${t}${t === deviceTz ? ' (appareil)' : ''}</option>`).join('');
 function syncLocUI() {
-  $('locLabel').textContent = S.loc.name || `${num(S.loc.lat, 2)}°, ${num(S.loc.lon, 2)}°`;
+  const gl = typeof LIVE !== 'undefined' ? gpsLabel() : '';
+  $('locLabel').textContent = (S.loc.src === 'gps' && gl ? gl : S.loc.name || `${num(S.loc.lat, 2)}°, ${num(S.loc.lon, 2)}°`);
+  const ag = $('arGps'); if (ag) ag.textContent = gl;
   $('locName').value = S.loc.name; $('latInput').value = S.loc.lat; $('lonInput').value = S.loc.lon;
   if (!TZS.includes(S.loc.tz) && validTz(S.loc.tz)) { TZS.push(S.loc.tz); $('tzSel').insertAdjacentHTML('beforeend', `<option value="${S.loc.tz}">${S.loc.tz}</option>`); }
   $('tzSel').value = S.loc.tz;
 }
 function setLocation(loc) {
-  S.loc = { ...S.loc, ...loc };
+  S.loc = { ...S.loc, ...loc }; if (!('src' in loc)) S.loc.src = '';
   observer = new A.Observer(S.loc.lat, S.loc.lon, 0);
   riseCache.clear(); frameKey = ''; S.dirty = true; lastClockTxt = ''; syncLocUI(); save();
   forecastState.key = null; updateSky(true);
@@ -1018,13 +1029,15 @@ function setLocation(loc) {
   renderInfo();
 }
 $('locApply').onclick = () => {
+  if (LIVE.gps) gpsStop(false);
   const lat = parseFloat(String($('latInput').value).replace(',', '.')), lon = parseFloat(String($('lonInput').value).replace(',', '.'));
   if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) { $('geoStatus').textContent = 'Coordonnées invalides : latitude entre −90 et 90, longitude entre −180 et 180.'; return; }
   setLocation({ name: $('locName').value.trim() || 'Lieu personnalisé', lat, lon, tz: $('tzSel').value });
   $('geoStatus').textContent = 'Lieu mis à jour.';
 };
-$('locReset').onclick = () => { setLocation({ ...DEFAULT_LOC }); $('geoStatus').textContent = 'Retour à La Rochelle.'; };
+$('locReset').onclick = () => { if (LIVE.gps) gpsStop(false); setLocation({ ...DEFAULT_LOC }); $('geoStatus').textContent = 'Retour à La Rochelle.'; };
 $('geoBtn').onclick = () => {
+  if (LIVE.gps) gpsStop(false);
   const st = $('geoStatus');
   if (!navigator.geolocation) { st.textContent = 'La géolocalisation n\'est pas disponible dans ce navigateur. Saisissez la latitude et la longitude.'; return; }
   st.textContent = 'Recherche de votre position…';
@@ -1366,14 +1379,14 @@ const mesLab = [], mesLabF = [], mesAx1 = [0, 0], mesAx2 = [0, 0];
 function drawMessier(groundOn) {
   const sel = S.selected, lz = LASER.target;
   const selI = sel && sel.kind === 'mes' ? sel.i : -1, lzI = lz && lz.kind === 'mes' ? lz.i : -1;
-  const dsoM = DSO.state === 'ok' && dsoOn();
-  if (!S.opts.messier && !dsoM && selI < 0 && lzI < 0) return;
+  const dsoM = DSO.state === 'ok' && dsoOn(), arD = AR.on && S.opts.arDeep !== false;
+  if (!S.opts.messier && !dsoM && !arD && selI < 0 && lzI < 0) return;
   mesUpdate();
   const m1byXO = S.opts.extreme || (dsoM && MES.some(o => o.xo === 'm1' && o.xoI >= 0 && dsoXoOn(o.xoI))) || (sel && sel.kind === 'xo') || (lz && lz.kind === 'xo'); // le Crabe est alors déjà dessiné par la couche « objets extrêmes »
   const pxPerArcmin = V.s * DEG / 60, labNames = V.fovDeg < 40;
   ctx.save(); ctx.font = '600 11px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   for (const i of MES_ORDER) {
-    if (!S.opts.messier && !(dsoM && dsoMesOn(i)) && i !== selI && i !== lzI) continue;
+    if (!S.opts.messier && !(dsoM && dsoMesOn(i)) && !(arD && MES[i].mag <= 7) && i !== selI && i !== lzI) continue; // mode caméra : Messier brillants
     const o = MES[i];
     if (o.xo === 'm1' && m1byXO) continue;
     const v = o.neu; if (groundOn && v[2] < -0.01) continue;
@@ -1606,8 +1619,9 @@ function drawDeepSky(groundOn) {
   const sel = S.selected, lz = LASER.target;
   const selI = sel && sel.kind === 'dso' ? sel.i : -1, lzI = lz && lz.kind === 'dso' ? lz.i : -1;
   DSO.drawn = 0; DSO.cand = 0;
-  if (DSO.state !== 'ok' || (!dsoOn() && selI < 0 && lzI < 0)) return;
-  const mask = dsoMask(), user = S.dsoMag >= 16 ? 99 : S.dsoMag, zl = Math.min(user, dsoZoomLim()), cap = DSO_CAP[Q.level] || 260;
+  const arD = AR.on && S.opts.arDeep !== false;
+  if (DSO.state !== 'ok' || (!dsoOn() && !arD && selI < 0 && lzI < 0)) return;
+  const mask = dsoMask() | (arD ? 4 : 0), user = S.dsoMag >= 16 ? 99 : S.dsoMag, zl = Math.min(user, dsoZoomLim()), cap = DSO_CAP[Q.level] || 260;
   const stamp = ++DSO.stamp, seen = DSO.seen, F = DSO.F, MAGE = DSO.MAGE;
   let nC = 0;
   const pxPerArcmin = V.s * DEG / 60;
@@ -1623,7 +1637,7 @@ function drawDeepSky(groundOn) {
     const ve = viewEqj();
     dsoQuery(ve.ra, ve.dec, ve.r, zl, consider);
     if (mask & 12) for (const i of DSO.special) if (MAGE[i] <= user) consider(i); // Caldwell / H400 : peu nombreux, toujours montrés
-  }
+  } else if (arD) for (const i of DSO.special) if ((F[i] & 4) && MAGE[i] <= 8) consider(i); // mode caméra : Caldwell brillants
   if (selI >= 0) consider(selI); if (lzI >= 0) consider(lzI);
   DSO.cand = nC;
   // plafond : les plus brillants d'abord (la sélection et la cible du laser toujours)
@@ -1939,7 +1953,7 @@ function kalEnsure() {
   if (KAL.key === key && (KAL.ev || KAL.job)) return;
   if (KAL.job) KAL.job.cancel = true;
   KAL.key = key; KAL.ev = null; KAL.start = start; KAL.prog = 0;
-  KAL.job = kalBuild(start, ev => { KAL.ev = ev; KAL.job = null; renderKal(); });
+  KAL.job = kalBuild(start, ev => { KAL.ev = ev; KAL.job = null; renderKal(); if (RAP.on) { rapSchedule(); notifCheck(); notifTriggers(); } });
   renderKal();
 }
 function renderKal() {
@@ -1947,18 +1961,20 @@ function renderKal() {
   const head = `<div class="muted kal-period">${S.loc.name} · du ${fmt('date').format(new Date(KAL.start))} et pendant 12 mois</div>`;
   const chips = `<div class="mes-chips kal-chips">${KAL_TYPES.map(([k, l]) => `<button class="mchip${KAL.f === k ? ' on' : ''}" data-cf="${k}" type="button">${k === 'all' ? '' : KAL_ICON[k] + ' '}${l}${KAL.ev ? ` <small>${k === 'all' ? KAL.ev.length : KAL.ev.filter(e => e.type === k).length}</small>` : ''}</button>`).join('')}</div>`;
   const iss = `<a class="kal-iss" href="https://www.heavens-above.com/PassSummary.aspx?satid=25544&lat=${S.loc.lat.toFixed(4)}&lng=${S.loc.lon.toFixed(4)}&loc=${encodeURIComponent(S.loc.name)}&alt=0&tz=UCT" target="_blank" rel="noopener">🛰️ Passages de l'ISS près de chez vous <small>Heavens-Above, lien externe ↗</small></a>${SAT.adv ? '<button class="btn mini" id="kalIssApp" type="button">Passages dans l\'app (24 h)</button>' : ''}`;
-  if (!KAL.ev) { el.innerHTML = head + chips + `<p class="muted">Calcul des événements sur l'appareil… ${Math.round(KAL.prog * 100)} %</p>`; bindKal(el); return; }
+  if (!KAL.ev) { el.innerHTML = head + '<div id="rapBox" class="kal-rap"></div>' + chips + `<p class="muted">Calcul des événements sur l'appareil… ${Math.round(KAL.prog * 100)} %</p>`; bindKal(el); return; }
   const list = KAL.ev.filter(e => KAL.f === 'all' || e.type === KAL.f);
   let html = '', month = '';
   for (const e of list) {
     const mo = fmt('my').format(new Date(e.t)); if (mo !== month) { month = mo; html += `<li class="kal-month">${mo}</li>`; }
-    html += `<li class="kal-ev kal-${e.type}${e.vis === 'no' ? ' kal-no' : ''}" data-ev="${KAL.ev.indexOf(e)}"><span class="kal-ico">${e.ico || (e.eclipse === 'soleil' ? '🌞' : KAL_ICON[e.type])}</span><div><div class="pname">${e.title}</div><div class="pmeta">${e.sub}</div></div><div class="pright"><b>${fmt('dmed').format(new Date(e.t))}</b><br><span class="muted">${hm(e.t)}</span></div></li>`;
+    html += `<li class="kal-ev kal-${e.type}${e.vis === 'no' ? ' kal-no' : ''}" data-ev="${KAL.ev.indexOf(e)}"><span class="kal-ico">${e.ico || (e.eclipse === 'soleil' ? '🌞' : KAL_ICON[e.type])}</span><div><div class="pname">${e.title}</div><div class="pmeta">${e.sub}</div></div><div class="pright"><b>${fmt('dmed').format(new Date(e.t))}</b><br><span class="muted">${hm(e.t)}</span></div><button class="kal-ics" type="button" data-ics="${KAL.ev.indexOf(e)}" title="Ajouter à mon calendrier" aria-label="Ajouter à mon calendrier : ${e.title.replace(/"/g, '')}">📅</button></li>`;
   }
-  el.innerHTML = head + chips + (KAL.f === 'all' ? iss : '') + `<ul class="plist kal-list">${html || '<li class="muted">Aucun événement de ce type sur 12 mois.</li>'}</ul>
+  el.innerHTML = head + '<div id="rapBox" class="kal-rap"></div>' + chips + (KAL.f === 'all' ? iss : '') + `<ul class="plist kal-list">${html || '<li class="muted">Aucun événement de ce type sur 12 mois.</li>'}</ul>
   <p class="fine">Calculs locaux (astronomy-engine, précision de l'ordre de la minute). Heures pour ${S.loc.name}. Rapprochements : écart vu du centre de la Terre (Lune ≤ 3° d'une planète, ≤ 1,5° d'une étoile brillante ; planètes ≤ 2,5°). Étoiles filantes : liste IMO, pic calculé d'après la longitude solaire, ZHR = taux en ciel idéal avec radiant au zénith (on en voit moins). Touchez un événement pour régler l'heure et viser.</p>`;
   bindKal(el);
 }
 function bindKal(el) {
+  renderRap();
+  el.querySelectorAll('[data-ics]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const e = KAL.ev[+b.dataset.ics]; icsDownload([e], 'celeste-' + kalId(e) + '.ics'); });
   el.querySelectorAll('[data-cf]').forEach(b => b.onclick = () => { KAL.f = b.dataset.cf; renderKal(); });
   el.querySelectorAll('li[data-ev]').forEach(li => li.onclick = () => kalGo(KAL.ev[+li.dataset.ev]));
   const ia = el.querySelector('#kalIssApp'); if (ia) ia.onclick = () => { SAT.opts.iss = true; saveSatOpts(); satEnsureData(); openPanel('sats', true); startPassJob(); };
@@ -2405,7 +2421,7 @@ const vang = (a, b) => Math.acos(clamp(vdot(a, b), -1, 1)) * RAD;
 const vperp = (v, u) => { const d = vdot(v, u); return vnorm([v[0] - d * u[0], v[1] - d * u[1], v[2] - d * u[2]]); };
 function vrot(v, ax, a) { const c = Math.cos(a), s = Math.sin(a), x = vcross(ax, v), d = vdot(ax, v) * (1 - c); return [v[0] * c + x[0] * s + ax[0] * d, v[1] * c + x[1] * s + ax[1] * d, v[2] * c + x[2] * s + ax[2] * d]; }
 function onMotion(e) {
-  if (!AR.on || AR.paused) return;
+  if (!(AR.on || LIVE.compass) || AR.paused) return;
   NG.motionN++;
   const rr = e.rotationRate;
   if (rr && (rr.alpha != null || rr.beta != null || rr.gamma != null)) NG.rrOk++; else NG.rrNull++;
@@ -2642,23 +2658,7 @@ function drawCalReticle() {
 let arLast = 0;
 function updateAR(now) {
   if (!AR.on || !AR.raw) return;
-  const dt = Math.min(0.2, (now - (arLast || now)) / 1000); arLast = now;
-  const ax0 = NG.on ? (ngFuse(dt, now) || deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma)) : deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma);
-  AR.axes = [ax0.X, ax0.Y, ax0.Z];
-  if (CAL.collect) calCollect(AR.axes, now);
-  const { X, Y, Z } = calApplyAxes(ax0.X, ax0.Y, ax0.Z, CALQ); // calibrage sur étoile : inclinaison de l'appareil
-  let ang = 0;
-  if (screen.orientation && typeof screen.orientation.angle === 'number') ang = screen.orientation.angle;
-  else if (typeof window.orientation === 'number') ang = window.orientation;
-  const th = ang * DEG, ct = Math.cos(th), st = Math.sin(th);
-  const upE = [ct * Y[0] + st * X[0], ct * Y[1] + st * X[1], ct * Y[2] + st * X[2]]; // haut de l'écran
-  const fE = [-Z[0], -Z[1], -Z[2]]; // axe de la caméra arrière
-  const d = ((AR.offset || 0) + AR.userHead + calAzActive()) * DEG, cd = Math.cos(d), sd = Math.sin(d);
-  const toNEU = v => { const N = v[1], E = v[0]; return [N * cd - E * sd, N * sd + E * cd, v[2]]; };
-  const f = toNEU(fE), u = toNEU(upE);
-  const k = AR.f && !NG.on ? 1 - Math.exp(-dt / 0.09) : 1; // lissage exponentiel (~90 ms) ; sans gyroscope : déjà filtré
-  AR.f = vnorm(AR.f ? AR.f.map((x, i) => lerp(x, f[i], k)) : f);
-  AR.u = vnorm(AR.u ? AR.u.map((x, i) => lerp(x, u[i], k)) : u);
+  if (!sensorFrame(AR, now)) return; // calcul partagé avec la boussole de la carte (Ciel en direct)
   const r = vnorm(vcross(AR.u, AR.f)); const uu = vcross(AR.f, r);
   AR.basis = { fN: AR.f[0], fE: AR.f[1], fU: AR.f[2], rN: r[0], rE: r[1], rU: r[2], uN: uu[0], uE: uu[1], uU: uu[2] };
 }
@@ -2693,7 +2693,9 @@ function startAR() {
   }
   Object.assign(NG, { on: false, why: '', motionN: 0, rrOk: 0, rrNull: 0, sign: 0, votes: 0, uf: null, nf: null, w: 0, lastN: null, lastU: null, lastG: null, spikeT: 0, noiseH: 1, noiseT: 0.4, motion: 0 }); NG.jit = { c1: null, c2: null, ms: 0, n: 0, flag: false }; NG.stats = { rejected: 0, frames: 0 };
   CALS.session = false; AR.axes = null;
-  AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.camMsg = ''; AR.lastAbs = 0; AR.paused = false; AR.wantCam = false; setRelative(false);
+  AR.on = true; AR.f = null; AR.u = null; AR.raw = null; AR.offset = null; AR.gotEvent = false; AR.absolute = false; arLast = 0; AR.last = 0; AR.camMsg = ''; AR.lastAbs = 0; AR.paused = false; AR.wantCam = false; setRelative(false);
+  if (!LIVE.gps && navigator.geolocation && navigator.permissions) navigator.permissions.query({ name: 'geolocation' }).then(r => { if (r.state === 'granted' && AR.on && !LIVE.gps) gpsStart(); }).catch(() => {});
+  if (S.opts.arDeep !== false && location.protocol !== 'file:') dsoEnsure(); // catalogue chargé en arrière-plan (impossible en fichier local)
   const carry = LASER.pin || (S.selected && S.selected.kind !== 'con' ? S.selected : null); LASER.pin = null;
   document.body.classList.add('ar'); $('arBar').classList.remove('hidden');
   if (carry) setGuideTarget({ ...carry }); $('arBtn').classList.add('on');
@@ -2730,7 +2732,7 @@ function stopAR() {
   AR.on = false; AR.camera = false; AR.f = null; AR.raw = null;
   if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; }
   const v = $('camera'); v.srcObject = null; v.classList.remove('on');
-  removeOrientListeners(); AR.wantCam = false; AR.paused = false; setRelative(false);
+  if (!LIVE.compass) removeOrientListeners(); else { LIVE.f = null; LIVE.u = null; LIVE.last = 0; } AR.wantCam = false; AR.paused = false; setRelative(false);
   if (CAL.active) calEnd(); $('calSheet').classList.add('hidden'); $('ngTips').classList.add('hidden'); NG.on = false; syncNgUI();
   LASER.target = null; LASER.key = ''; setGuideTarget(null);
   document.body.classList.remove('ar'); $('arBar').classList.add('hidden'); $('arBtn').classList.remove('on'); arMsg('');
@@ -3242,6 +3244,473 @@ document.querySelector('#topbar .brand').addEventListener('click', () => {
   S.dirty = true;
 });
 
+/* ---------------- Ciel en direct : GPS en continu (watchPosition) + boussole sur la carte + « Autour de moi » ---------------- */
+const LIVE = { gps: false, watch: null, fix: null, err: '', compass: false, follow: false, dir: null, f: null, u: null, last: 0, near: [], nearT: 0, nearKey: '', moved: 0, saved: null, perm: '', cErr: '' };
+try { LIVE.saved = JSON.parse(localStorage.getItem('celeste.loc.saved') || 'null'); } catch (e) {}
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+function havM(la1, lo1, la2, lo2) { const p1 = la1 * DEG, p2 = la2 * DEG, dp = (la2 - la1) * DEG, dl = (lo2 - lo1) * DEG; const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2; return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h))); }
+const GPS_HELP_DENIED = isIOS
+  ? 'Localisation refusée. Sur iPhone : Réglages › Confidentialité et sécurité › Service de localisation › Safari (ou « Céleste » si elle est sur l\'écran d\'accueil) › « Lorsque l\'app est active », et activez « Position exacte ». Puis rechargez la page.'
+  : 'Localisation refusée. Sur Android (Chrome) : touchez l\'icône à gauche de l\'adresse › Autorisations › Position › Autoriser. Vérifiez aussi que la localisation du téléphone est activée (volet rapide).';
+function gpsStart() {
+  LIVE.err = '';
+  if (!navigator.geolocation) { LIVE.err = 'La géolocalisation n\'est pas disponible dans ce navigateur : le lieu enregistré est utilisé.'; renderLive(); return; }
+  if (!window.isSecureContext) LIVE.err = 'Page non sécurisée (http ou fichier local) : la plupart des navigateurs refusent le GPS hors HTTPS.';
+  if (LIVE.watch != null) return;
+  if (S.loc.src !== 'gps') { LIVE.saved = { ...S.loc }; try { localStorage.setItem('celeste.loc.saved', JSON.stringify(LIVE.saved)); } catch (e) {} }
+  LIVE.gps = true; LIVE.fix = null; LIVE.moved = 0;
+  try { LIVE.watch = navigator.geolocation.watchPosition(gpsFix, gpsErr, { enableHighAccuracy: true, maximumAge: 15000, timeout: 30000 }); } catch (e) { gpsErr({ code: 2 }); }
+  try { localStorage.setItem('celeste.gps', 'on'); } catch (e) {}
+  syncLocUI(); renderLive();
+}
+function gpsStop(restore) {
+  if (LIVE.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(LIVE.watch);
+  LIVE.watch = null; LIVE.gps = false;
+  try { localStorage.setItem('celeste.gps', 'off'); } catch (e) {}
+  if (restore && S.loc.src === 'gps' && LIVE.saved) setLocation({ ...LIVE.saved, src: '' });
+  syncLocUI(); renderLive();
+}
+function gpsFix(p) {
+  const c = p.coords; LIVE.fix = { lat: c.latitude, lon: c.longitude, acc: c.accuracy, t: p.timestamp || Date.now() }; LIVE.err = '';
+  const d = S.loc.src === 'gps' ? havM(S.loc.lat, S.loc.lon, c.latitude, c.longitude) : Infinity;
+  if (d > 500) { // moins de 500 m : le ciel est identique à l'œil, on évite de tout recalculer
+    LIVE.moved++;
+    setLocation({ name: 'Position GPS', lat: +c.latitude.toFixed(5), lon: +c.longitude.toFixed(5), tz: deviceTz || S.loc.tz, src: 'gps' });
+    if (LIVE.moved > 1 && isFinite(d)) toast(`Position mise à jour : déplacement de ${d < 5000 ? Math.round(d) + ' m' : num(d / 1000, 1) + ' km'}`, 3000);
+  }
+  syncLocUI(); renderLive();
+}
+function gpsErr(e) {
+  const code = e && e.code;
+  LIVE.err = code === 1 ? GPS_HELP_DENIED : code === 3 ? 'Le GPS met du temps à répondre (intérieur ?). Recherche en cours…' : 'Position indisponible pour l\'instant (signal GPS faible). Nouvel essai automatique…';
+  if (code === 1) { if (LIVE.watch != null) navigator.geolocation.clearWatch(LIVE.watch); LIVE.watch = null; LIVE.gps = false; }
+  if (!LIVE.fix && S.loc.src === 'gps' && LIVE.saved && code === 1) setLocation({ ...LIVE.saved, src: '' }); // repli sur la ville enregistrée
+  syncLocUI(); renderLive();
+}
+function gpsLabel() {
+  if (!LIVE.gps) return '';
+  if (!LIVE.fix) return 'GPS…';
+  return `GPS ± ${LIVE.fix.acc < 1000 ? Math.round(LIVE.fix.acc) + ' m' : num(LIVE.fix.acc / 1000, 1) + ' km'}`;
+}
+/* Boussole sur la carte (hors mode caméra) : mêmes capteurs, même fusion sans gyroscope que le mode caméra */
+function ngReset() {
+  Object.assign(NG, { on: false, why: '', motionN: 0, rrOk: 0, rrNull: 0, sign: 0, votes: 0, uf: null, nf: null, w: 0, lastN: null, lastU: null, lastG: null, spikeT: 0, noiseH: 1, noiseT: 0.4, motion: 0 });
+  NG.jit = { c1: null, c2: null, ms: 0, n: 0, flag: false }; NG.stats = { rejected: 0, frames: 0 };
+}
+function compassStart(fromAR) {
+  if (LIVE.compass) return Promise.resolve(true);
+  let permP = Promise.resolve('granted');
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try { permP = DeviceOrientationEvent.requestPermission().catch(() => 'denied'); } catch (e) { permP = Promise.resolve('denied'); }
+  }
+  return permP.then(perm => {
+    if (perm !== 'granted') { LIVE.cErr = isIOS ? 'Boussole refusée. Sur iPhone : Réglages › Apps › Safari › « Mouvement et orientation », puis rechargez la page (HTTPS obligatoire).' : 'Capteurs d\'orientation indisponibles sur cet appareil.'; renderLive(); return false; }
+    if (!AR.on) { ngReset(); AR.raw = null; AR.offset = null; AR.absolute = false; AR.gotEvent = false; AR.lastAbs = 0; }
+    LIVE.compass = true; LIVE.f = null; LIVE.u = null; LIVE.last = 0; LIVE.cErr = '';
+    addOrientListeners();
+    setTimeout(() => { if (LIVE.compass && !AR.gotEvent) { LIVE.cErr = 'Aucun capteur d\'orientation détecté (ordinateur ou page non sécurisée ?).' + (window.isSecureContext ? '' : ' Ouvrez la version HTTPS.'); renderLive(); } else if (LIVE.compass && !AR.absolute) { LIVE.cErr = 'Boussole sans nord absolu sur ce navigateur : la direction peut être décalée (calibrez en mode caméra).'; renderLive(); } }, 2500);
+    try { localStorage.setItem('celeste.compass', 'on'); } catch (e) {}
+    renderLive(); return true;
+  });
+}
+function compassStop() {
+  LIVE.compass = false; LIVE.follow = false; LIVE.dir = null;
+  if (!AR.on) { removeOrientListeners(); NG.on = false; }
+  try { localStorage.setItem('celeste.compass', 'off'); } catch (e) {}
+  S.dirty = true; renderLive(); syncFollowUI();
+}
+/* axes de l'appareil → direction visée (axe caméra) et haut de l'écran, lissés, dans le repère (Nord, Est, Haut) */
+function sensorFrame(st, now) {
+  if (!AR.raw) return false;
+  const dt = Math.min(0.2, (now - (st.last || now)) / 1000); st.last = now;
+  const ax0 = NG.on ? (ngFuse(dt, now) || deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma)) : deviceAxes(AR.raw.alpha, AR.raw.beta, AR.raw.gamma);
+  AR.axes = [ax0.X, ax0.Y, ax0.Z];
+  if (CAL.collect) calCollect(AR.axes, now);
+  const { X, Y, Z } = calApplyAxes(ax0.X, ax0.Y, ax0.Z, CALQ); // calibrage sur étoile : inclinaison de l'appareil
+  let ang = 0;
+  if (screen.orientation && typeof screen.orientation.angle === 'number') ang = screen.orientation.angle;
+  else if (typeof window.orientation === 'number') ang = window.orientation;
+  const th = ang * DEG, ct = Math.cos(th), sn = Math.sin(th);
+  const upE = [ct * Y[0] + sn * X[0], ct * Y[1] + sn * X[1], ct * Y[2] + sn * X[2]]; // haut de l'écran
+  const fE = [-Z[0], -Z[1], -Z[2]]; // axe de la caméra arrière
+  const d = ((AR.offset || 0) + AR.userHead + calAzActive()) * DEG, cd = Math.cos(d), sd = Math.sin(d);
+  const toNEU = v => { const N = v[1], E = v[0]; return [N * cd - E * sd, N * sd + E * cd, v[2]]; };
+  const f = toNEU(fE), u = toNEU(upE);
+  const k = st.f && !NG.on ? 1 - Math.exp(-dt / 0.09) : 1; // lissage exponentiel (~90 ms) ; sans gyroscope : déjà filtré
+  st.f = vnorm(st.f ? st.f.map((x, i) => lerp(x, f[i], k)) : f);
+  st.u = vnorm(st.u ? st.u.map((x, i) => lerp(x, u[i], k)) : u);
+  return true;
+}
+let liveLastSensor = 0;
+function liveTick(now, dt) {
+  if (!LIVE.compass || AR.on) return;
+  if (now - liveLastSensor >= 33 && sensorFrame(LIVE, now)) {
+    liveLastSensor = now;
+    // téléphone à plat (écran vers le ciel) : la direction est celle du haut de l'écran, comme une boussole
+    const flat = LIVE.f[2] < -0.75, v = flat ? LIVE.u : LIVE.f;
+    const az = norm360(Math.atan2(v[1], v[0]) * RAD), alt = flat ? 25 : clamp(Math.asin(clamp(v[2], -1, 1)) * RAD, -30, 89);
+    const p = LIVE.dir;
+    if (!p || Math.abs(angDiff(az, p.az)) > 0.5 || Math.abs(alt - p.alt) > 0.5) { LIVE.dir = { az, alt, flat }; S.dirty = true; }
+  }
+  if (LIVE.follow && LIVE.dir && !S.tween && !(gesture && gesture.kind)) { // la carte suit le téléphone
+    const k = 1 - Math.exp(-dt / 0.22), da = angDiff(LIVE.dir.az, norm360(S.az * RAD)), dl = LIVE.dir.alt - S.alt * RAD;
+    if (Math.abs(da) > 0.12 || Math.abs(dl) > 0.12) { S.az += da * k * DEG; S.alt = clamp(S.alt + dl * k * DEG, -89 * DEG, 89 * DEG); S.dirty = true; }
+  }
+  if (now - LIVE.nearT > 1000 && !$('panel-live').classList.contains('hidden')) { LIVE.nearT = now; renderLive(); renderNear(); }
+}
+function drawHeading() { // cône de visée sur la carte
+  if (!LIVE.compass || !LIVE.dir || AR.on) return;
+  const c = altAzVec(LIVE.dir.alt, LIVE.dir.az), r = 22 * DEG;
+  const e1 = vnorm(vcross(Math.abs(c[2]) > 0.95 ? [1, 0, 0] : [0, 0, 1], c)), e2 = vcross(c, e1);
+  ctx.save(); ctx.beginPath(); let pen = false;
+  for (let k = 0; k <= 36; k++) {
+    const a = k / 36 * 6.2832, cs = Math.cos(r), sn = Math.sin(r);
+    const v = [0, 1, 2].map(j => c[j] * cs + (e1[j] * Math.cos(a) + e2[j] * Math.sin(a)) * sn);
+    if (proj(v[0], v[1], v[2])) { if (pen) ctx.lineTo(P.x, P.y); else ctx.moveTo(P.x, P.y); pen = true; } else pen = false;
+  }
+  ctx.closePath(); ctx.fillStyle = 'rgba(255,196,90,.09)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,196,90,.75)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+  if (proj(c[0], c[1], c[2]) && onScreen(30)) {
+    const x = P.x, y = P.y; ctx.strokeStyle = 'rgba(255,210,120,.95)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.2832); ctx.moveTo(x - 16, y); ctx.lineTo(x - 9, y); ctx.moveTo(x + 9, y); ctx.lineTo(x + 16, y); ctx.moveTo(x, y - 16); ctx.lineTo(x, y - 9); ctx.stroke();
+    ctx.font = '600 11.5px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,214,140,.95)';
+    ctx.fillText(LIVE.dir.flat ? 'Devant vous' : 'Votre téléphone vise ici', x, y + 30); ctx.textAlign = 'left';
+  }
+  // repère au pied du cône sur l'horizon
+  const h = altAzVec(0, LIVE.dir.az);
+  if (proj(h[0], h[1], h[2]) && onScreen(20)) { ctx.fillStyle = 'rgba(255,196,90,.95)'; ctx.beginPath(); ctx.moveTo(P.x, P.y - 12); ctx.lineTo(P.x - 7, P.y + 2); ctx.lineTo(P.x + 7, P.y + 2); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+/* « Autour de moi » : meilleurs objets visibles dans la direction visée */
+function aroundMe(dirAz, dirAlt, R = 40) {
+  const c = altAzVec(dirAlt, dirAz), out = [], lim = Math.max(2.5, Math.min(effMagLimit(), 5));
+  const add = (sel, name, type, v, mag, bonus = 0) => {
+    if (v[2] < 0.02) return; const sep = vang(v, c); if (sep > R) return;
+    const aa = neuToAltAz(v); out.push({ sel, name, type, alt: aa.alt, az: aa.az, sep, mag, score: sep / R * 2 + (mag == null ? 0 : mag) * 0.35 - bonus, rel: relDir(c, v) });
+  };
+  sky.bodies.forEach((bs, bi) => { if (bs.b.key === 'Sun') return; if (bs.mag != null && bs.mag > 6.5) return; add({ kind: 'body', bi }, bs.b.fr, bs.b.key === 'Moon' ? 'Lune' : 'Planète', bs.neu, bs.mag == null ? -6 : bs.mag, 1.5); });
+  for (let i = 0; i < NS && SMAG[i] <= Math.min(lim, 3.2); i++) { const n = D.names[SHIP[i]]; if (!n || !n[0]) continue; add({ kind: 'star', i }, n[0], 'Étoile', [SN[i], SE[i], SU[i]], SMAG[i]); }
+  mesUpdate(); for (let i = 0; i < MES.length; i++) { const o = MES[i]; if (o.mag > 7.5) continue; const s = mesSel(i); add(s, mesTitle(o), o.tf, o.neu, o.mag + 1.2); }
+  if (DSO.state === 'ok') for (const i of DSO.special) { if (DSO.MAG[i] > 8.5) continue; add({ kind: 'dso', i }, dsoTitle(i), DSO_T[DSO.codes[DSO.T[i]]][0], dsoNEU(i, [0, 0, 0]), DSO.MAG[i] + 1.5); }
+  if (satOn()) for (const st of SAT.fine) if (st.ok && st.cur[4] && st.cur[2] > 0) add({ kind: 'sat', id: st.id }, (SAT.byId.get(st.id) || {}).short || 'Satellite', 'Satellite éclairé', st.cur, 2.5, 2);
+  out.sort((a, b) => a.score - b.score);
+  const seen = new Set(), res = []; for (const o of out) { const k = objName(o.sel); if (seen.has(k)) continue; seen.add(k); res.push(o); if (res.length >= 8) break; }
+  return res;
+}
+function relDir(c, v) { // position relative à la direction visée : « à gauche », « plus haut »…
+  const ac = neuToAltAz(c), av = neuToAltAz(v), dz = angDiff(av.az, ac.az) * Math.cos(av.alt * DEG), dh = av.alt - ac.alt;
+  if (Math.hypot(dz, dh) < 4) return 'droit devant';
+  const h = Math.abs(dz) < 4 ? '' : `${Math.round(Math.abs(dz))}° à ${dz > 0 ? 'droite' : 'gauche'}`, v2 = Math.abs(dh) < 4 ? '' : `${Math.round(Math.abs(dh))}° plus ${dh > 0 ? 'haut' : 'bas'}`;
+  return [h, v2].filter(Boolean).join(', ');
+}
+function renderNear() {
+  const el = $('liveNear'); if (!el) return;
+  const d = LIVE.compass && LIVE.dir ? LIVE.dir : { az: norm360(S.az * RAD), alt: S.alt * RAD };
+  const key = Math.round(d.az / 2) + '|' + Math.round(d.alt / 2) + '|' + Math.floor(simMs() / 60000) + frameKey;
+  if (key === LIVE.nearKey && el.childElementCount) return; LIVE.nearKey = key;
+  updateSky(false); LIVE.near = aroundMe(d.az, Math.max(d.alt, 8));
+  const con = (() => { const v = altAzVec(Math.max(d.alt, 8), d.az); const h = eqjFromNEU(v); try { return consFr(A.Constellation(h.ra / 15, h.dec).symbol); } catch (e) { return ''; } })();
+  el.innerHTML = `<div class="muted live-dir">${LIVE.compass && LIVE.dir ? 'Votre téléphone vise' : 'Centre de la carte'} : <b>${cardinal(d.az)} (${Math.round(d.az)}°)</b>, hauteur ${Math.round(d.alt)}°${con ? ` · constellation <b>${con}</b>` : ''}</div>
+  <ul class="plist">${LIVE.near.map((o, k) => `<li data-near="${k}"><span class="mes-g">${o.type === 'Planète' ? '●' : o.type === 'Lune' ? '☾' : o.type === 'Étoile' ? '✦' : o.type.startsWith('Satellite') ? '🛰' : '⬭'}</span><div><div class="pname">${o.name}</div><div class="pmeta">${o.type}${o.mag != null && o.type !== 'Lune' ? ' · mag ' + num(o.mag, 1) : ''} · ${o.rel}</div></div><div class="pright"><b>${Math.round(o.alt)}°</b><br><span class="muted">${cardinal(o.az)}</span></div></li>`).join('') || '<li class="muted">Rien de brillant au-dessus de l\'horizon dans cette direction. Tournez-vous ou levez le téléphone.</li>'}</ul>`;
+  el.querySelectorAll('li[data-near]').forEach(li => li.onclick = () => { const o = LIVE.near[+li.dataset.near]; if (LIVE.follow) { LIVE.follow = false; syncFollowUI(); } goToObject({ ...o.sel }); });
+}
+function eqjFromNEU(v) { const m = rot, hx = v[0], hy = -v[1], hz = v[2]; const x = m[0][0] * hx + m[0][1] * hy + m[0][2] * hz, y = m[1][0] * hx + m[1][1] * hy + m[1][2] * hz, z = m[2][0] * hx + m[2][1] * hy + m[2][2] * hz; return { ra: norm360(Math.atan2(y, x) * RAD), dec: Math.asin(clamp(z, -1, 1)) * RAD }; }
+function syncFollowUI() { const b = $('liveFollow'); if (b) b.checked = LIVE.follow; LIVE.html = ''; }
+function renderLive() {
+  const el = $('liveState'); if (!el) return;
+  const f = LIVE.fix;
+  const html = `<div class="live-row"><div><b>📍 Position</b><div class="pmeta">${LIVE.gps ? (f ? `GPS actif : ${num(f.lat, 4)}°, ${num(f.lon, 4)}° · précision <b>± ${Math.round(f.acc)} m</b> · mise à jour si vous bougez de plus de 500 m` : 'Recherche du signal GPS…') : `Lieu enregistré : ${S.loc.name}`}</div></div>
+    <button class="btn${LIVE.gps ? '' : ' accent'}" id="liveGpsBtn" type="button">${LIVE.gps ? 'Arrêter le GPS' : 'Activer le GPS'}</button></div>
+  ${LIVE.err ? `<p class="live-err">${LIVE.err}</p>` : ''}
+  <div class="live-row"><div><b>🧭 Boussole</b><div class="pmeta">${LIVE.compass ? (AR.gotEvent ? `Active${AR.absolute ? ' (nord vrai)' : ' (sans nord absolu)'}${NG.on ? ' · stabilisation sans gyroscope' : ''}` : 'Attente des capteurs…') : 'Le cône orange montre où vise votre téléphone, même sans le mode caméra.'}</div></div>
+    <button class="btn${LIVE.compass ? '' : ' accent'}" id="liveCompassBtn" type="button">${LIVE.compass ? 'Arrêter' : 'Activer'}</button></div>
+  ${LIVE.cErr ? `<p class="live-err">${LIVE.cErr}</p>` : ''}
+  <label class="live-follow"><input type="checkbox" id="liveFollow"${LIVE.follow ? ' checked' : ''}${LIVE.compass ? '' : ' disabled'}> La carte suit la direction du téléphone</label>`;
+  if (html === LIVE.html && el.firstChild) return; // pas de reconstruction inutile (un toucher en cours resterait sans effet)
+  LIVE.html = html; el.innerHTML = html;
+  $('liveGpsBtn').onclick = () => { if (LIVE.gps) gpsStop(false); else gpsStart(); };
+  $('liveCompassBtn').onclick = () => { if (LIVE.compass) compassStop(); else compassStart(); };
+  $('liveFollow').onchange = e => { LIVE.follow = e.target.checked; if (LIVE.follow) toast('La carte suit votre téléphone. Faire glisser la carte arrête le suivi.', 3500); };
+}
+// redémarrage automatique si l'autorisation a déjà été donnée (aucune fenêtre de demande au chargement)
+try {
+  if (localStorage.getItem('celeste.gps') === 'on' && navigator.permissions && navigator.geolocation) navigator.permissions.query({ name: 'geolocation' }).then(r => { if (r.state === 'granted') gpsStart(); }).catch(() => {});
+} catch (e) {}
+
+/* ---------------- Rappels (notifications) + export .ics ---------------- */
+// Sans serveur push : vérification à l'ouverture / au retour au premier plan / chaque minute, periodicSync (Chrome Android, PWA installée),
+// Notification Triggers si le navigateur les propose. Export .ics = la solution fiable partout (rappels du calendrier du téléphone).
+const RAP = { on: false, types: { eclipse: true, meteor: true, rappro: true, planete: false, lune: false, saison: false, iss: false }, leads: [60, 1440], sent: {}, timer: null, open: false, trig: 0 };
+try { const o = JSON.parse(localStorage.getItem('celeste.rappels') || 'null'); if (o) { RAP.on = !!o.on; Object.assign(RAP.types, o.types || {}); if (Array.isArray(o.leads)) RAP.leads = o.leads; } RAP.sent = JSON.parse(localStorage.getItem('celeste.rappels.sent') || '{}'); } catch (e) {}
+const RAP_LEADS = [[15, '15 min'], [60, '1 h'], [180, '3 h'], [1440, '1 jour']];
+const RAP_TYPES = [['eclipse', '🌘 Éclipses'], ['meteor', '☄️ Étoiles filantes (pic)'], ['rappro', '✨ Rapprochements'], ['planete', '🪐 Planètes (opposition, élongation)'], ['lune', '🌙 Phases de la Lune'], ['saison', '🌍 Saisons'], ['iss', '🛰️ Passages de l\'ISS']];
+const rapSave = () => { try { localStorage.setItem('celeste.rappels', JSON.stringify({ on: RAP.on, types: RAP.types, leads: RAP.leads })); localStorage.setItem('celeste.rappels.sent', JSON.stringify(RAP.sent)); } catch (e) {} };
+function kalId(e) { let h = 0; const s = e.type + e.title; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return e.type + '-' + Math.round(e.t / 60000) + '-' + (h >>> 0).toString(36); }
+const kalNotifT = e => e.type === 'meteor' ? kalBestTime(e) : e.t; // étoiles filantes : meilleure heure d'observation autour du pic
+function leadTxt(m) { return m >= 1440 ? (m < 2160 ? 'demain' : `dans ${Math.round(m / 1440)} jours`) : m >= 60 ? `dans ${Math.round(m / 60)} h` : `dans ${m} min`; }
+/* programme des rappels (30 jours) : gardé en localStorage + cache pour le service worker (periodicSync) */
+function rapSchedule() {
+  const now = Date.now(), out = [];
+  if (KAL.ev) for (const e of KAL.ev) {
+    if (!RAP.types[e.type]) continue; const t = kalNotifT(e); if (t < now - 3600000 || t > now + 31 * 86400000) continue;
+    out.push({ id: kalId(e), t, title: `${(e.ico || KAL_ICON[e.type] || '✨')} ${e.title}`, body: `${fmt('dmed').format(new Date(t))} à ${hm(t)} · ${e.sub}`.slice(0, 180) });
+  }
+  if (RAP.types.iss && SAT.passes) for (const p of SAT.passes) if (p.s.iss && p.rise > now - 600000) out.push({ id: 'iss-' + Math.round(p.rise / 60000), t: p.rise, title: '🛰️ Passage de l\'ISS', body: `${hm(p.rise)} → ${hm(p.set)} · jusqu'à ${Math.round(p.maxEl)}° de hauteur${p.mag != null ? ' · mag ' + num(p.mag, 1) : ''}`, iss: true });
+  out.sort((a, b) => a.t - b.t);
+  if (KAL.ev || !RAP.sched) RAP.sched = out;
+  try { localStorage.setItem('celeste.rappels.sched', JSON.stringify(RAP.sched)); } catch (e) {}
+  if ('caches' in window) caches.open('celeste-rappels').then(c => c.match('./rappels.json').then(r => r ? r.json() : null).catch(() => null).then(d => { // rappels déjà montrés par le service worker : fusion
+    if (d && d.sent) for (const k in d.sent) if (!RAP.sent[k]) RAP.sent[k] = d.sent[k];
+    return c.put('./rappels.json', new Response(JSON.stringify({ leads: RAP.leads, on: RAP.on, sched: RAP.sched, sent: RAP.sent }), { headers: { 'Content-Type': 'application/json' } }));
+  })).catch(() => {});
+  return RAP.sched;
+}
+try { RAP.sched = JSON.parse(localStorage.getItem('celeste.rappels.sched') || 'null'); } catch (e) {}
+const notifPerm = () => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+function notifShow(title, body, tag, data) {
+  const opt = { body, tag, icon: 'icon.svg', badge: 'icon.svg', data: data || {}, lang: 'fr' };
+  if (navigator.serviceWorker && navigator.serviceWorker.ready) return navigator.serviceWorker.getRegistration().then(r => r ? r.showNotification(title, opt) : new Notification(title, opt)).catch(() => { try { new Notification(title, opt); } catch (e) {} });
+  try { new Notification(title, opt); } catch (e) {}
+  return Promise.resolve();
+}
+/* vérification : envoie les rappels dont l'heure est passée (une seule fois par événement et par délai) */
+function notifCheck() {
+  if (!RAP.on || notifPerm() !== 'granted') return 0;
+  const now = Date.now(); let n = 0;
+  for (const ev of RAP.sched || []) {
+    if (ev.t < now - 1800000) continue;
+    const due = RAP.leads.filter(m => now >= ev.t - m * 60000);
+    if (!due.length) continue;
+    const m = Math.min(...due), tag = ev.id + '|' + m;
+    if (RAP.sent[tag] || RAP.sent[ev.id + '|all']) continue;
+    RAP.leads.forEach(L => { if (L >= m) RAP.sent[ev.id + '|' + L] = now; }); // pas de rafale de rappels en retard
+    const mins = Math.round((ev.t - now) / 60000);
+    notifShow(ev.title, (mins > 1 ? `${leadTxt(mins).replace(/^./, c => c.toUpperCase())} · ` : 'Maintenant · ') + ev.body, ev.id, { ev: ev.id, t: ev.t });
+    n++;
+  }
+  for (const k in RAP.sent) if (now - RAP.sent[k] > 40 * 86400000) delete RAP.sent[k];
+  if (n) rapSave();
+  return n;
+}
+/* Notification Triggers (expérimental, Chrome) : programmation sans ouvrir l'app */
+function notifTriggers() {
+  if (!RAP.on || notifPerm() !== 'granted' || typeof TimestampTrigger === 'undefined' || !('showTrigger' in Notification.prototype)) return 0;
+  let n = 0; const now = Date.now();
+  navigator.serviceWorker.getRegistration().then(r => { if (!r) return;
+    for (const ev of RAP.sched || []) for (const m of RAP.leads) { const at = ev.t - m * 60000; if (at > now && at < now + 31 * 86400000) { try { r.showNotification(ev.title, { body: `${leadTxt(m).replace(/^./, c => c.toUpperCase())} · ${ev.body}`, tag: ev.id + '|' + m, showTrigger: new TimestampTrigger(at), data: { ev: ev.id, t: ev.t } }); n++; } catch (e) {} } }
+    RAP.trig = n;
+  }).catch(() => {});
+  return 1;
+}
+function notifPeriodic() {
+  if (!navigator.serviceWorker) return Promise.resolve('no');
+  return navigator.serviceWorker.ready.then(r => {
+    if (!r.periodicSync) return 'no';
+    return (navigator.permissions ? navigator.permissions.query({ name: 'periodic-background-sync' }).then(p => p.state).catch(() => 'prompt') : Promise.resolve('prompt'))
+      .then(st => st === 'granted' ? r.periodicSync.register('celeste-rappels', { minInterval: 6 * 3600000 }).then(() => 'ok') : 'denied');
+  }).catch(() => 'no');
+}
+function notifPlatform() {
+  const p = notifPerm(), sa = isStandalone();
+  if (isIOS) {
+    if (p === 'unsupported' || !sa) return { ok: false, txt: 'iPhone : les notifications web ne marchent que si Céleste est installée (iOS 16.4 ou plus). Dans Safari : bouton Partager ⬆️ › « Sur l\'écran d\'accueil », puis ouvrez Céleste depuis son icône et revenez ici. En attendant, utilisez « Ajouter à mon calendrier » (.ics) : c\'est le plus fiable sur iPhone.' };
+    return { ok: true, txt: 'iPhone (app installée) : les rappels s\'affichent quand Céleste est ouverte ou revient au premier plan, ou si iOS la réveille. iOS ne permet pas de programmer une notification à l\'avance sans serveur : pour une alarme garantie, ajoutez l\'événement à votre calendrier (.ics).' };
+  }
+  if (p === 'unsupported') return { ok: false, txt: 'Ce navigateur ne gère pas les notifications. Utilisez « Ajouter à mon calendrier » (.ics).' };
+  return { ok: true, txt: `Android / ordinateur : rappels à l'ouverture de Céleste et toutes les minutes tant qu'elle est ouverte${RAP.ps === 'ok' ? ', et en arrière-plan quelques fois par jour (synchronisation périodique de Chrome, app installée)' : sa ? '' : '. Installez Céleste (menu ⋮ › « Installer l\'application ») pour que Chrome la réveille aussi en arrière-plan quelques fois par jour'}${RAP.trig ? ` · ${RAP.trig} rappels programmés à l'avance` : ''}. Le .ics reste la seule alarme garantie à la minute près.` };
+}
+function notifEnable() {
+  if (notifPerm() === 'unsupported') { RAP.on = false; rapSave(); renderRap(); toast('Notifications non disponibles ici : utilisez l\'export calendrier (.ics)', 4500); return; }
+  Promise.resolve(Notification.permission === 'default' ? Notification.requestPermission() : Notification.permission).then(p => {
+    if (p !== 'granted') { RAP.on = false; rapSave(); renderRap(); toast(isIOS ? 'Notifications refusées : Réglages › Notifications › Céleste' : 'Notifications refusées : autorisez-les dans les réglages du site (icône à gauche de l\'adresse)', 5000); return; }
+    RAP.on = true; rapSave(); kalEnsure(); rapSchedule(); notifTriggers();
+    notifPeriodic().then(r => { RAP.ps = r; renderRap(); });
+    notifShow('🔔 Rappels Céleste activés', 'Vous serez prévenu avant les prochains événements choisis.', 'celeste-test');
+    renderRap();
+  });
+}
+function renderRap() {
+  const el = $('rapBox'); if (!el) return;
+  const pl = notifPlatform(), p = notifPerm();
+  const next = (RAP.sched || []).filter(e => e.t > Date.now()).slice(0, 3);
+  el.innerHTML = `<button class="kal-rap-head" id="rapToggle" type="button" aria-expanded="${RAP.open}">🔔 Rappels ${RAP.on && p === 'granted' ? '<span class="tag ok">activés</span>' : '<span class="tag">désactivés</span>'}<span class="chev">${RAP.open ? '▴' : '▾'}</span></button>
+  ${RAP.open ? `<div class="kal-rap-body">
+    <div class="rap-grid">${RAP_TYPES.filter(([k]) => k !== 'iss' || SAT.adv).map(([k, l]) => `<label><input type="checkbox" data-rt="${k}"${RAP.types[k] ? ' checked' : ''}> ${l}</label>`).join('')}</div>
+    <div class="muted" style="margin:6px 0 2px">Me prévenir :</div>
+    <div class="mes-chips">${RAP_LEADS.map(([m, l]) => `<button type="button" class="mchip${RAP.leads.includes(m) ? ' on' : ''}" data-rl="${m}">${l} avant</button>`).join('')}</div>
+    <div class="rap-act"><button class="btn${RAP.on ? '' : ' accent'}" id="rapOn" type="button">${RAP.on && p === 'granted' ? 'Désactiver' : 'Activer les notifications'}</button>
+    <button class="btn" id="rapIcsAll" type="button">📅 Tout ajouter au calendrier</button></div>
+    <p class="fine rap-plat${pl.ok ? '' : ' warn'}">${pl.txt}</p>
+    ${RAP.on && next.length ? `<div class="fine">Prochains rappels : ${next.map(e => `${e.title} (${fmt('dmed').format(new Date(e.t))})`).join(' · ')}</div>` : ''}
+  </div>` : ''}`;
+  $('rapToggle').onclick = () => { RAP.open = !RAP.open; renderRap(); };
+  if (!RAP.open) return;
+  el.querySelectorAll('[data-rt]').forEach(c => c.onchange = () => { RAP.types[c.dataset.rt] = c.checked; rapSave(); if (c.dataset.rt === 'iss' && c.checked) { SAT.opts.iss = true; saveSatOpts(); satEnsureData(); startPassJob(); } rapSchedule(); notifTriggers(); });
+  el.querySelectorAll('[data-rl]').forEach(b => b.onclick = () => { const m = +b.dataset.rl; RAP.leads = RAP.leads.includes(m) ? RAP.leads.filter(x => x !== m) : [...RAP.leads, m].sort((a, b2) => a - b2); if (!RAP.leads.length) RAP.leads = [m]; rapSave(); rapSchedule(); notifTriggers(); renderRap(); });
+  $('rapOn').onclick = () => { if (RAP.on && p === 'granted') { RAP.on = false; rapSave(); rapSchedule(); renderRap(); } else notifEnable(); };
+  $('rapIcsAll').onclick = () => { const list = (KAL.ev || []).filter(e => KAL.f === 'all' ? RAP.types[e.type] || !Object.values(RAP.types).some(Boolean) : e.type === KAL.f); icsDownload(list.length ? list : (KAL.ev || []), 'celeste-evenements.ics'); };
+}
+/* ---- export iCalendar (.ics) : fonctionne partout, y compris rappels de l'iPhone ---- */
+function icsEsc(s) { return String(s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1'); }
+function icsDate(ms) { return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }
+function icsFold(l) { const out = []; let s = l; while (s.length > 74) { out.push(s.slice(0, 74)); s = ' ' + s.slice(74); } out.push(s); return out.join('\r\n'); }
+function icsBuild(list) {
+  const now = icsDate(Date.now()), L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Celeste//Calendrier du ciel//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Céleste – ciel'];
+  for (const e of list) {
+    const t = kalNotifT(e), dur = e.type === 'meteor' ? 3 * 3600000 : e.eclipse ? 2 * 3600000 : 3600000;
+    L.push('BEGIN:VEVENT', `UID:${kalId(e)}@celeste-astro`, `DTSTAMP:${now}`, `DTSTART:${icsDate(t)}`, `DTEND:${icsDate(t + dur)}`,
+      `SUMMARY:${icsEsc((e.ico || KAL_ICON[e.type] || '') + ' ' + e.title)}`, `DESCRIPTION:${icsEsc(e.sub + '\n' + (e.type === 'meteor' ? 'Meilleure heure pour observer depuis ' : 'Heure calculée pour ') + S.loc.name + ' (Céleste).')}`,
+      `LOCATION:${icsEsc(S.loc.name)}`, 'TRANSP:TRANSPARENT', 'CATEGORIES:Astronomie');
+    for (const m of RAP.leads) L.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(e.title)}`, `TRIGGER:-PT${m}M`, 'END:VALARM');
+    L.push('END:VEVENT');
+  }
+  L.push('END:VCALENDAR');
+  return L.map(icsFold).join('\r\n') + '\r\n';
+}
+function fileDownload(text, name, type) {
+  const blob = new Blob([text], { type }), url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+  window.__lastDownload = { name, type, text };
+}
+function icsDownload(list, name) {
+  if (!list.length) { toast('Aucun événement à exporter', 2500); return; }
+  fileDownload(icsBuild(list), name, 'text/calendar;charset=utf-8');
+  toast(list.length > 1 ? `📅 ${list.length} événements exportés : ouvrez le fichier pour les ajouter à votre calendrier` : '📅 Ouvrez le fichier pour l\'ajouter à votre calendrier (avec rappel)', 4500);
+}
+/* clic sur une notification → ouverture de l'événement */
+function rapOpenFromUrl() {
+  const m = /[?&]ev=([^&#]+)/.exec(location.search); if (!m) return;
+  const id = decodeURIComponent(m[1]); history.replaceState(null, '', location.pathname);
+  const go = () => { if (!KAL.ev) { setTimeout(go, 400); return; } const e = KAL.ev.find(x => kalId(x) === id); if (e) kalGo(e); else openPanel('calendar', true); };
+  kalEnsure(); go();
+}
+if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', ev => { const d = ev.data || {}; if (d.type === 'rappel-open' && d.ev) { kalEnsure(); const go = () => { if (!KAL.ev) { setTimeout(go, 400); return; } const e = KAL.ev.find(x => kalId(x) === d.ev); if (e) kalGo(e); }; go(); } });
+function rapInit() {
+  if (RAP.on) { kalEnsure(); setTimeout(() => { rapSchedule(); notifCheck(); notifTriggers(); }, 50); }
+  RAP.timer = setInterval(() => { if (!RAP.on) return; if (KAL.ev) rapSchedule(); notifCheck(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && RAP.on) { kalEnsure(); rapSchedule(); notifCheck(); } });
+  if (RAP.on) notifPeriodic().then(r => { RAP.ps = r; });
+  rapOpenFromUrl();
+}
+
+/* ---------------- Mode observation : séance chronométrée, plan de la nuit, journal ---------------- */
+const SES = { cur: null, log: [], wake: null, tick: null, wakeTxt: '' };
+try { SES.cur = JSON.parse(localStorage.getItem('celeste.session') || 'null'); SES.log = JSON.parse(localStorage.getItem('celeste.sessions') || '[]'); } catch (e) {}
+const sesSave = () => { try { localStorage.setItem('celeste.session', JSON.stringify(SES.cur)); localStorage.setItem('celeste.sessions', JSON.stringify(SES.log.slice(-40))); } catch (e) {} };
+const SES_CD = [[20, '🌑 Adaptation à l\'obscurité'], [5, '5 min'], [10, '10 min'], [30, '30 min']];
+const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(x).padStart(2, '0'); };
+function sesPlan() { // meilleurs objets de la nuit : Lune, planètes, Messier brillants, (ciel profond brillant si chargé)
+  const N = mesNight(), out = [];
+  const a = N.a || simMs(), b = N.b || simMs() + 6 * 3600000;
+  for (const bd of [BODIES.find(x => x.key === 'Moon'), ...PLANETS]) {
+    if (!bd) continue; let best = null;
+    for (let t = a; t <= b; t += 20 * 60000) { const h = altOf(bd.key, t); if (!best || h.altitude > best.alt) best = { alt: h.altitude, t }; }
+    let mag = null; try { mag = A.Illumination(bd.key, A.MakeTime(new Date(best.t))).mag; } catch (e) {}
+    if (best.alt > 8 && (mag == null || mag < 6.5)) out.push({ sel: { kind: 'body', bi: bodyIdx(bd.key) }, name: bd.fr, type: bd.key === 'Moon' ? 'Lune' : 'Planète', t: best.t, alt: best.alt, mag });
+  }
+  const mar = marathonList().filter(r => MES[r.i].mag <= 7.5).sort((p, q) => MES[p.i].mag - MES[q.i].mag).slice(0, 10);
+  for (const r of mar) out.push({ sel: mesSel(r.i), name: mesTitle(MES[r.i]), type: MES[r.i].tf, t: r.b.t, alt: r.b.alt, mag: MES[r.i].mag });
+  return out.sort((p, q) => (p.t || 0) - (q.t || 0)).map(o => ({ ...o, done: false, note: '', at: null, alt: Math.round(o.alt) }));
+}
+function sesStart() {
+  SES.cur = { id: Date.now(), start: Date.now(), loc: S.loc.name, lat: S.loc.lat, lon: S.loc.lon, plan: sesPlan(), cd: null, night0: S.night, notes: '' };
+  sesSave(); sesEnter(); renderSes(); toast('Séance commencée · mode nuit rouge activé', 3000);
+}
+function sesEnter() { // mode nuit forcé + écran allumé
+  if (!S.night) { S.night = true; applyNight(); }
+  document.body.classList.add('session');
+  sesWake(); if (!SES.tick) SES.tick = setInterval(sesTick, 1000); sesTick();
+}
+function sesWake() {
+  if (!SES.cur || document.hidden) return;
+  if (!('wakeLock' in navigator)) { SES.wakeTxt = 'Écran : le verrouillage automatique n\'est pas bloqué par ce navigateur (réglez la mise en veille du téléphone).'; return; }
+  if (SES.wake && !SES.wake.released) return;
+  navigator.wakeLock.request('screen').then(l => { SES.wake = l; SES.wakeTxt = 'Écran maintenu allumé pendant la séance.'; l.addEventListener('release', () => { SES.wakeTxt = 'Écran : verrou relâché (il sera repris au retour).'; renderSesHead(); }); renderSesHead(); })
+    .catch(() => { SES.wakeTxt = 'Écran : impossible de le garder allumé (mode économie d\'énergie ?).'; renderSesHead(); });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && SES.cur) { sesWake(); sesTick(); } });
+function sesStop() {
+  const c = SES.cur; if (!c) return;
+  c.end = Date.now(); SES.log.push(c); SES.cur = null; sesSave();
+  if (SES.wake) { try { SES.wake.release(); } catch (e) {} SES.wake = null; }
+  clearInterval(SES.tick); SES.tick = null; document.body.classList.remove('session');
+  if (!c.night0 && S.night) { S.night = false; applyNight(); save(); }
+  $('sesChip').classList.add('hidden'); renderSes();
+  toast(`Séance terminée : ${c.plan.filter(o => o.done).length} objet(s) observé(s) en ${dur(c.end - c.start)}`, 4000);
+}
+function sesCountdown(min, label) {
+  if (!SES.cur) return; SES.cur.cd = min ? { end: Date.now() + min * 60000, min, label, done: false } : null; sesSave(); sesTick(); renderSes();
+}
+function sesTick() {
+  const c = SES.cur, chip = $('sesChip'); if (!c) { chip.classList.add('hidden'); return; }
+  const now = Date.now(); let txt = '⏱ ' + dur(now - c.start);
+  if (c.cd && !c.cd.done) {
+    const left = c.cd.end - now;
+    if (left <= 0) {
+      c.cd.done = true; sesSave();
+      try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+      const msg = c.cd.min === 20 ? 'Vos yeux sont adaptés à l\'obscurité : bonne observation !' : `Compte à rebours de ${c.cd.min} min terminé`;
+      toast('⏰ ' + msg, 6000); if (notifPerm() === 'granted' && document.hidden) notifShow('⏰ Céleste', msg, 'celeste-cd');
+      renderSes();
+    } else txt += ' · ⏳ ' + dur(left);
+  }
+  chip.textContent = txt; chip.classList.remove('hidden');
+  const t = $('sesTime'); if (t) t.textContent = txt;
+}
+function renderSesHead() { const w = $('sesWakeTxt'); if (w) w.textContent = SES.wakeTxt; }
+function renderSes() {
+  const el = $('sesBody'); if (!el || $('panel-session').classList.contains('hidden')) return;
+  const c = SES.cur;
+  if (!c) {
+    const last = SES.log.slice(-5).reverse();
+    el.innerHTML = `<p class="muted">Une séance passe l'écran en <b>rouge</b> (préserve la vision nocturne), le garde <b>allumé</b>, lance un chronomètre et prépare la liste des plus beaux objets de la nuit à cocher.</p>
+      <button class="btn accent" id="sesGo" type="button">▶ Commencer une séance</button>
+      ${last.length ? `<h4 class="ses-h">Séances précédentes</h4><ul class="plist">${last.map(s => `<li><span class="mes-g">📓</span><div><div class="pname">${fmt('dmed').format(new Date(s.start))} · ${s.loc}</div><div class="pmeta">${dur((s.end || s.start) - s.start)} · ${s.plan.filter(o => o.done).length}/${s.plan.length} observés</div></div></li>`).join('')}</ul>
+      <div class="row-btns"><button class="btn" data-sx="txt" type="button">Exporter .txt</button><button class="btn" data-sx="csv" type="button">.csv</button><button class="btn" data-sx="json" type="button">.json</button></div>` : ''}`;
+    $('sesGo').onclick = sesStart; bindSesExport(el); return;
+  }
+  const done = c.plan.filter(o => o.done).length;
+  el.innerHTML = `<div class="ses-top"><div id="sesTime" class="ses-time"></div><button class="btn" id="sesStopBtn" type="button">■ Terminer</button></div>
+    <div class="fine" id="sesWakeTxt">${SES.wakeTxt}</div>
+    <div class="mes-chips ses-cd">${SES_CD.map(([m, l]) => `<button type="button" class="mchip${c.cd && c.cd.min === m && !c.cd.done ? ' on' : ''}" data-cd="${m}">${l}${m === 20 ? ' 20 min' : ''}</button>`).join('')}${c.cd && !c.cd.done ? '<button type="button" class="mchip" data-cd="0">✕ Arrêter le compte à rebours</button>' : ''}</div>
+    <h4 class="ses-h">Plan de la nuit · ${done}/${c.plan.length} observés</h4>
+    <ul class="plist ses-plan">${c.plan.map((o, k) => `<li class="${o.done ? 'ses-done' : ''}"><label class="ses-ck"><input type="checkbox" data-ck="${k}"${o.done ? ' checked' : ''} aria-label="Observé : ${o.name}"></label><div class="ses-main" data-go="${k}"><div class="pname">${o.name}</div><div class="pmeta">${o.type}${o.mag != null && o.type !== 'Lune' ? ' · mag ' + num(o.mag, 1) : ''}${o.t ? ' · au mieux vers ' + hm(o.t) + ' (' + o.alt + '°)' : ''}${o.at ? ' · vu à ' + hm(o.at) : ''}</div>
+      ${o.done ? `<input class="ses-note" data-note="${k}" type="text" placeholder="Note (instrument, impression…)" value="${String(o.note || '').replace(/"/g, '&quot;')}">` : ''}</div><button class="ses-del" data-del="${k}" type="button" aria-label="Retirer">×</button></li>`).join('')}</ul>
+    <div class="row-btns"><button class="btn" id="sesAdd" type="button"${lastSel ? '' : ' disabled'}>＋ Ajouter ${lastSel ? '« ' + objName(lastSel) + ' »' : 'l\'objet sélectionné'}</button></div>
+    <label class="ses-notes">Notes de séance<textarea id="sesNotes" rows="2" placeholder="Météo, seeing, matériel…">${c.notes || ''}</textarea></label>
+    <div class="row-btns"><button class="btn" data-sx="txt" type="button">Exporter .txt</button><button class="btn" data-sx="csv" type="button">.csv</button><button class="btn" data-sx="json" type="button">.json</button></div>`;
+  sesTick(); renderSesHead();
+  $('sesStopBtn').onclick = sesStop;
+  el.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => { const m = +b.dataset.cd; sesCountdown(m, b.textContent); });
+  el.querySelectorAll('[data-ck]').forEach(i => i.onchange = () => { const o = c.plan[+i.dataset.ck]; o.done = i.checked; o.at = i.checked ? Date.now() : null; sesSave(); renderSes(); });
+  el.querySelectorAll('[data-note]').forEach(i => { i.oninput = () => { c.plan[+i.dataset.note].note = i.value; sesSave(); }; i.onclick = e => e.stopPropagation(); });
+  el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { c.plan.splice(+b.dataset.del, 1); sesSave(); renderSes(); });
+  el.querySelectorAll('[data-go]').forEach(d => d.onclick = e => { if (e.target.closest('input')) return; const o = c.plan[+d.dataset.go]; goToObject({ ...o.sel }); });
+  $('sesAdd').onclick = () => { const s = lastSel; if (!s) return; const aa = objAltAz(s) || { alt: 0 }; c.plan.push({ sel: { ...s }, name: objName(s), type: 'Ajouté', t: null, alt: Math.round(aa.alt || 0), mag: null, done: false, note: '', at: null }); sesSave(); renderSes(); };
+  $('sesNotes').oninput = e => { c.notes = e.target.value; sesSave(); };
+  bindSesExport(el);
+}
+function bindSesExport(el) { el.querySelectorAll('[data-sx]').forEach(b => b.onclick = () => sesExport(b.dataset.sx)); }
+function sesExport(fmtK) {
+  const all = [...SES.log, ...(SES.cur ? [SES.cur] : [])]; if (!all.length) return;
+  const d = ms => ms ? new Date(ms).toLocaleString('fr-FR') : '';
+  if (fmtK === 'json') return fileDownload(JSON.stringify(all.map(s => ({ ...s, plan: s.plan.map(({ sel, ...o }) => o) })), null, 1), 'celeste-journal.json', 'application/json');
+  if (fmtK === 'csv') {
+    const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"', rows = [['seance', 'lieu', 'debut', 'fin', 'objet', 'type', 'observe', 'heure', 'note'].join(';')];
+    for (const s of all) for (const o of s.plan) rows.push([d(s.start), s.loc, d(s.start), d(s.end), o.name, o.type, o.done ? 'oui' : 'non', d(o.at), o.note].map(q).join(';'));
+    return fileDownload('\ufeff' + rows.join('\r\n'), 'celeste-journal.csv', 'text/csv;charset=utf-8');
+  }
+  const L = ['JOURNAL D\'OBSERVATION — Céleste', ''];
+  for (const s of all) {
+    L.push(`Séance du ${d(s.start)} — ${s.loc} (${num(s.lat, 3)}°, ${num(s.lon, 3)}°)`, `Durée : ${dur((s.end || Date.now()) - s.start)}${s.end ? '' : ' (en cours)'}`);
+    for (const o of s.plan.filter(x => x.done)) L.push(`  ✔ ${o.name} (${o.type}) à ${o.at ? new Date(o.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '?'}${o.note ? ' — ' + o.note : ''}`);
+    const nd = s.plan.filter(x => !x.done); if (nd.length) L.push('  Non observés : ' + nd.map(o => o.name).join(', '));
+    if (s.notes) L.push('  Notes : ' + s.notes); L.push('');
+  }
+  fileDownload(L.join('\r\n'), 'celeste-journal.txt', 'text/plain;charset=utf-8');
+}
+
 /* ---------------- Boucle ---------------- */
 let lastT = performance.now(), lastLive = 0, lastInfo = 0, lastCond = 0;
 function frame(now) {
@@ -3256,6 +3725,7 @@ function frame(now) {
     if (k >= 1) { S.tween = null; save(); }
     S.dirty = true;
   }
+  liveTick(now, dt);
   // AR : ~30 i/s suffisent (capteurs lissés) et divisent par deux le travail GPU
   if (AR.on && now - Q.lastRender < 31) { updateClock(); return; }
   if (AR.on) { updateAR(now); S.dirty = true; }
@@ -3266,7 +3736,7 @@ function frame(now) {
   if (las || AR.on) setupView();
   if (AR.on) updateGuide(now);
   if (las) updateLaser(now); else if (LASER.key) { LASER.key = ''; if (!(AR.on && GUIDE.locked)) LASER.target = null; renderLaserPanel(now); }
-  if (changed || S.dirty || Q.ovl) {
+  if ((changed || S.dirty || Q.ovl) && !(LIVE.compass && !AR.on && !S.tween && !gesture && now - Q.lastRender < 31)) { // boussole sur la carte : 30 i/s maximum
     const t0 = performance.now();
     render(); S.dirty = false; Q.ovl = false;
     Q.cost += (performance.now() - t0 - Q.cost) * 0.1; Q.renders++; Q.lastRender = now;
@@ -3279,6 +3749,7 @@ function frame(now) {
 /* Onglet masqué : rAF est suspendu par le navigateur ; on coupe aussi capteurs et caméra (batterie) */
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    if (LIVE.compass && !AR.on) removeOrientListeners();
     if (AR.on) {
       removeOrientListeners(); AR.paused = true;
       if (AR.stream) { AR.stream.getTracks().forEach(t => t.stop()); AR.stream = null; AR.camera = false; $('camera').srcObject = null; }
@@ -3286,6 +3757,7 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   if (S.live) S.anchor = Date.now();
+  if (LIVE.compass && !AR.on) { addOrientListeners(); LIVE.f = null; LIVE.u = null; LIVE.last = 0; }
   if (AR.on && AR.paused) {
     AR.paused = false; addOrientListeners(); AR.f = null; AR.u = null;
     if (AR.wantCam) openCamera().then(res => { if (!AR.on || !res || !res.getTracks) { if (res && res.getTracks) res.getTracks().forEach(t => t.stop()); return; } attachCamera(res); S.dirty = true; });
@@ -3293,8 +3765,85 @@ document.addEventListener('visibilitychange', () => {
   S.dirty = true;
 });
 
+/* ---------------- Dispositions (v15) : « classique », « onglets » (barre du bas), « menu latéral » ---------------- */
+const LAYOUTS = { classique: 'Classique (boutons à droite)', onglets: 'Onglets en bas', lateral: 'Menu latéral' };
+const LAY = { cur: 'classique' };
+const FEAT = [
+  ['Observer', [['tonight', '🌙', 'Ce soir'], ['calendar', '📅', 'Agenda du ciel'], ['forecast', '☁️', 'Météo'], ['messier', '✦', 'Marathon Messier'], ['session', '⏱', 'Mode observation']]],
+  ['Ciel', [['@search', '🔍', 'Chercher un astre'], ['layers', '🗂️', 'Calques et affichage'], ['live', '📡', 'Ciel en direct (GPS + boussole)'], ['location', '📍', 'Lieu d\'observation'], ['sats', '🛰️', 'Satellites']]],
+  ['Modes', [['@ar', '📷', 'Mode caméra'], ['@laser', '🎯', 'Pointeur laser'], ['@night', '🔴', 'Mode nuit (rouge)'], ['@tel', '🔭', 'Mode télescope']]],
+];
+const TAB_GROUP = { tonight: 'tonight', calendar: 'tonight', forecast: 'tonight', messier: 'tonight', session: 'tonight', layers: 'layers', find: 'find', more: 'more', live: 'more', location: 'more', sats: 'more', menu: 'menu' };
+const GRP_NAV = { tonight: [['tonight', 'Ce soir'], ['calendar', 'Agenda'], ['forecast', 'Météo'], ['messier', 'Messier'], ['session', 'Séance']], more: [['more', 'Tout'], ['live', 'En direct'], ['location', 'Lieu']] };
+function featAct(k) {
+  if (k === '@search') { if (LAY.cur === 'onglets') openPanel('find', true); else { closeAll(); si.focus(); } return; }
+  if (k === '@ar') { closePanels(); $('arBtn').click(); return; }
+  if (k === '@laser') { $('laserBtn').click(); renderMenus(); return; }
+  if (k === '@night') { $('nightBtn').click(); renderMenus(); return; }
+  if (k === '@tel') { closeAll(); if (window.CELESTE_TEL && CELESTE_TEL.enterMode) CELESTE_TEL.enterMode(); return; }
+  openPanel(k, true);
+  if (k === 'messier') renderMarathon();
+  if (k === 'sats') { satEnsureData(); startPassJob(); }
+}
+function menuHtml() {
+  const on = { '@laser': S.opts.laser, '@night': S.night };
+  return FEAT.map(([g, items]) => `<h4 class="menu-h">${g}</h4><div class="menu-grid">${items.filter(([k]) => k !== 'sats' || SAT.adv).map(([k, ic, l]) => `<button type="button" class="menu-it${on[k] ? ' on' : ''}" data-feat="${k}"><span class="mi-ico">${ic}</span><span>${l}${k in on ? `<small>${on[k] ? 'activé' : 'désactivé'}</small>` : ''}</span></button>`).join('')}</div>`).join('')
+    + `<h4 class="menu-h">Disposition de l'écran</h4><div class="menu-lay">${Object.entries(LAYOUTS).map(([k, l]) => `<button type="button" class="mchip${LAY.cur === k ? ' on' : ''}" data-lay="${k}">${l}</button>`).join('')}</div>`;
+}
+function bindMenu(el) {
+  el.querySelectorAll('[data-feat]').forEach(b => b.onclick = () => featAct(b.dataset.feat));
+  el.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => setLayout(b.dataset.lay, true));
+}
+function renderMenus() { for (const id of ['moreBody', 'menuBody']) { const el = $(id); if (el) { el.innerHTML = menuHtml(); bindMenu(el); } } }
+function syncTabs() {
+  const g = TAB_GROUP[openPanelName()] || (S.selected ? '' : 'sky');
+  document.querySelectorAll('#tabbar [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === g));
+  document.body.classList.toggle('sheet-open', !!openPanelName());
+  document.body.classList.toggle('card-open', !!S.selected);
+  document.querySelectorAll('.grp-nav [data-gn]').forEach(b => b.classList.toggle('on', b.dataset.gn === openPanelName()));
+}
+function setLayout(name, user) {
+  if (!LAYOUTS[name]) name = 'classique';
+  LAY.cur = name;
+  for (const k in LAYOUTS) document.body.classList.toggle('layout-' + k, k === name);
+  // la recherche : dans l'onglet « Chercher » en mode onglets, en haut sinon
+  const form = $('searchForm');
+  if (name === 'onglets') { if (form.parentNode.id !== 'findBody') $('findBody').prepend(form); }
+  else if (form.parentNode.id !== 'topbar') $('topbar').insertBefore(form, $('locBtn'));
+  try { localStorage.setItem('celeste.layout', name); } catch (e) {}
+  const sel = $('layoutSel'); if (sel) sel.value = name;
+  if (user) { closePanels(); toast('Disposition : ' + LAYOUTS[name], 2500); }
+  renderMenus(); syncTabs(); S.dirty = true;
+}
+(function initLayout() {
+  // navigation de groupe en haut des feuilles (mode onglets)
+  for (const g in GRP_NAV) for (const [p] of GRP_NAV[g]) {
+    const sec = $('panel-' + p); if (!sec) continue;
+    const nav = document.createElement('div'); nav.className = 'grp-nav';
+    nav.innerHTML = GRP_NAV[g].map(([k, l]) => `<button type="button" class="mchip" data-gn="${k}">${l}</button>`).join('');
+    sec.querySelector('.panel-head').after(nav);
+  }
+  document.querySelectorAll('.grp-nav [data-gn]').forEach(b => b.onclick = () => featAct(b.dataset.gn));
+  document.querySelectorAll('.panel-head').forEach(h => { if (h.parentNode.id === 'panel-menu') return; const m = document.createElement('button'); m.type = 'button'; m.className = 'menu-back'; m.textContent = '‹ Menu'; m.setAttribute('aria-label', 'Retour au menu'); m.onclick = () => openPanel('menu', true); h.prepend(m); });
+  document.querySelectorAll('#tabbar [data-tab]').forEach(b => b.onclick = () => {
+    const t = b.dataset.tab;
+    if (t === 'sky') { closeAll(); syncTabs(); return; }
+    const cur = openPanelName();
+    if (TAB_GROUP[cur] === t) { closePanels(); syncTabs(); return; } // 2e toucher : referme
+    openPanel(t, true);
+    if (t === 'find') { si.focus(); }
+  });
+  $('menuBtn').onclick = () => openPanel('menu');
+  $('layoutSel').innerHTML = Object.entries(LAYOUTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  $('layoutSel').onchange = e => setLayout(e.target.value, true);
+  document.querySelectorAll('#findQuick [data-q]').forEach(b => b.onclick = () => { si.value = b.dataset.q; si.dispatchEvent(new Event('input', { bubbles: true })); si.focus(); });
+  const m = /[?&]layout=(onglets|lateral|classique)\b/.exec(location.search);
+  let saved = null; try { saved = localStorage.getItem('celeste.layout'); } catch (e) {}
+  setLayout(m ? m[1] : saved || 'classique');
+})();
+
 /* ---------------- Démarrage ---------------- */
-initQuality(); syncSatUI(); if (SAT.adv) satEnsureData(); applyNight(); syncLocUI(); syncTimeUI(); syncLaserUI(); syncQualityUI(); resize(); updateSky(true);
+initQuality(); syncSatUI(); if (SAT.adv) satEnsureData(); rapInit(); if (SES.cur) sesEnter(); applyNight(); syncLocUI(); syncTimeUI(); syncLaserUI(); syncQualityUI(); resize(); updateSky(true);
 requestAnimationFrame(frame);
 if ((location.protocol === 'https:' || location.hostname === 'localhost') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 /* ---------------- Télescope (telescope.js) : coordonnées J2000 de l'objet choisi, projection ---------------- */
@@ -3331,6 +3880,8 @@ function telSuggest() {
 }
 function projEqj(v) { const n = eqjToNEU(v[0], v[1], v[2], [0, 0, 0]); return proj(n[0], n[1], n[2]) ? { x: P.x, y: P.y } : null; }
 window.__celeste = {
+  setLayout, layout: () => LAY.cur, featAct,
+  LIVE, RAP, SES, gpsStart, gpsStop, compassStart, compassStop, aroundMe, renderNear, notifCheck, rapSchedule, icsBuild, kalId, sesStart, sesStop, sesCountdown, sesExport, notifPlatform, liveDir: () => LIVE.dir, near: () => LIVE.near.map(o => ({ name: o.name, type: o.type, sep: o.sep, alt: o.alt })), lastSel: () => lastSel, altAzOf: s => objAltAz(s), mesIdx: m => MES.findIndex(o => o.m === m), picksInfo: () => picks.map(p => ({ kind: p.kind, x: Math.round(p.x), y: Math.round(p.y) })),
   telTarget, toast, dirty() { S.dirty = true; }, refreshInfo() { if (S.selected) renderInfo(); }, projEqj, telSearch, telSuggest, closeAll, setLive,
   overlayOpened() { syncHistory(); }, overlayClosed() { syncHistory(); }, openPanelName,
   S, sky, AR, select, centerOn, setLocation, openPanel, loadForecast, forecastState, BODIES,

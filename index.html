@@ -18,6 +18,7 @@
   <canvas id="sky"></canvas>
 
   <header id="topbar">
+    <button id="menuBtn" class="chip menu-btn" type="button" aria-label="Menu : toutes les fonctions">☰</button>
     <div class="brand"><span class="logo">✦</span><span class="brand-name">Céleste</span></div>
     <form class="search" id="searchForm" role="search" action="#" autocomplete="off">
       <input id="searchInput" type="search" enterkeyhint="search" placeholder="Rechercher : Véga, Mars, Orion…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Rechercher un astre">
@@ -37,6 +38,7 @@
     <button class="fab hidden" id="telFab" title="Mode télescope" aria-label="Mode télescope"><svg class="ico" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14l13-6 2 4-13 6z"/><path d="M16 8l3-1.5 2 4-3 1.5"/><path d="M9 16l-3 5M10 16l3 5"/></svg><span class="lbl">Télescope</span></button>
   </nav>
 
+  <button id="sesChip" class="ses-chip hidden" type="button" data-open="session" aria-label="Séance d'observation en cours"></button>
   <div id="hud">
     <div id="viewInfo"></div>
   </div>
@@ -68,6 +70,15 @@
       <span id="offsetLabel">±0</span>
     </div>
   </footer>
+
+  <!-- Disposition « Onglets » : barre du bas -->
+  <nav id="tabbar" aria-label="Navigation">
+    <button type="button" data-tab="sky"><span class="ti">✦</span><span>Ciel</span></button>
+    <button type="button" data-tab="find"><span class="ti">🔍</span><span>Chercher</span></button>
+    <button type="button" data-tab="tonight"><span class="ti">🌙</span><span>Ce soir</span></button>
+    <button type="button" data-tab="layers"><span class="ti">🗂️</span><span>Calques</span></button>
+    <button type="button" data-tab="more"><span class="ti">☰</span><span>Plus</span></button>
+  </nav>
 
   <!-- Fiche objet -->
   <section id="infoCard" class="card hidden" aria-live="polite">
@@ -134,6 +145,7 @@
 
   <section id="panel-tonight" class="panel hidden">
     <div class="panel-head"><h2>Ce soir</h2><button class="close" data-close="panel-tonight" aria-label="Fermer">×</button></div>
+    <div class="panel-actions"><button class="btn" type="button" data-open="live">📡 Ciel en direct</button><button class="btn" type="button" data-open="session">🔭 Mode observation</button></div>
     <div id="tonightContent" class="panel-body"></div>
   </section>
 
@@ -153,6 +165,7 @@
   <section id="panel-layers" class="panel hidden">
     <div class="panel-head"><h2>Affichage</h2><button class="close" data-close="panel-layers" aria-label="Fermer">×</button></div>
     <div class="panel-body toggles">
+      <label class="lay-row">Disposition de l'écran <select id="layoutSel" aria-label="Disposition de l'écran"></select></label>
       <label><input type="checkbox" data-opt="lines" checked> Lignes des constellations</label>
       <label><input type="checkbox" data-opt="conNames" checked> Noms des constellations</label>
       <label><input type="checkbox" data-opt="starNames" checked> Noms des étoiles</label>
@@ -166,6 +179,7 @@
       <label><input type="checkbox" data-opt="extreme"> Objets extrêmes (trous noirs, supernovae, pulsars…)</label>
       <div class="xo-legend" aria-hidden="true"><span style="color:rgb(190,140,255)">◉ trou noir</span><span style="color:rgb(255,160,90)">✺ supernova</span><span style="color:rgb(110,225,255)">⊘ pulsar</span><span style="color:rgb(255,110,200)">∞ magnétar</span><span style="color:rgb(255,235,140)">◆ quasar</span><span style="color:rgb(255,120,100)">✩ étoile extrême</span></div>
       <label><input type="checkbox" data-opt="messier"> Catalogue de Messier (M1–M110)</label>
+      <label><input type="checkbox" data-opt="arDeep"> Mode caméra : Messier et Caldwell brillants toujours affichés</label>
       <div class="xo-legend mes-legend" aria-hidden="true"><span style="color:rgb(255,150,150)">⬬ galaxie</span><span style="color:rgb(255,226,120)">⁘ amas ouvert</span><span style="color:rgb(255,190,105)">⊕ amas globulaire</span><span style="color:rgb(110,215,235)">▢ nébuleuse</span><span style="color:rgb(120,240,170)">⊙ planétaire</span><span style="color:rgb(255,160,90)">✺ rémanent</span><span style="color:rgb(225,230,255)">‥ double · ⁙ astérisme</span></div>
       <button id="mesMarBtn" class="btn" type="button">Marathon Messier : visibles cette nuit</button>
       <div class="sect">Ciel profond (catalogues NGC, IC, Caldwell, Herschel 400)</div>
@@ -210,10 +224,45 @@
     <div class="panel-body"><div id="kalList"></div></div>
   </section>
 
+  <section id="panel-find" class="panel hidden">
+    <div class="panel-head"><h2>Chercher</h2><button class="close" data-close="panel-find" aria-label="Fermer">×</button></div>
+    <div class="panel-body"><div id="findBody"></div>
+      <div class="muted" style="margin:12px 0 6px">Idées :</div>
+      <div id="findQuick" class="mes-chips">
+        <button type="button" class="mchip" data-q="Lune">Lune</button><button type="button" class="mchip" data-q="Jupiter">Jupiter</button><button type="button" class="mchip" data-q="Saturne">Saturne</button><button type="button" class="mchip" data-q="Mars">Mars</button><button type="button" class="mchip" data-q="Vénus">Vénus</button><button type="button" class="mchip" data-q="Véga">Véga</button><button type="button" class="mchip" data-q="Orion">Orion</button><button type="button" class="mchip" data-q="Andromède">M31 Andromède</button><button type="button" class="mchip" data-q="Pléiades">Pléiades</button><button type="button" class="mchip" data-q="ISS">ISS</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel-more" class="panel hidden">
+    <div class="panel-head"><h2>Toutes les fonctions</h2><button class="close" data-close="panel-more" aria-label="Fermer">×</button></div>
+    <div class="panel-body" id="moreBody"></div>
+  </section>
+
+  <section id="panel-menu" class="panel hidden">
+    <div class="panel-head"><h2>✦ Céleste</h2><button class="close" data-close="panel-menu" aria-label="Fermer le menu">×</button></div>
+    <div class="panel-body" id="menuBody"></div>
+  </section>
+
+  <section id="panel-live" class="panel hidden">
+    <div class="panel-head"><h2>Ciel en direct</h2><button class="close" data-close="panel-live" aria-label="Fermer">×</button></div>
+    <div class="panel-body">
+      <p class="fine live-why">Votre position sert uniquement à calculer le ciel exact au-dessus de vous ; elle reste sur le téléphone (rien n'est envoyé). Le navigateur va demander l'autorisation : choisissez « Autoriser » (et « Position exacte » sur iPhone). Sans autorisation, Céleste garde le lieu enregistré.</p>
+      <div id="liveState"></div>
+      <h4 class="ses-h">Autour de moi</h4>
+      <div id="liveNear"></div>
+    </div>
+  </section>
+
+  <section id="panel-session" class="panel hidden">
+    <div class="panel-head"><h2>Mode observation</h2><button class="close" data-close="panel-session" aria-label="Fermer">×</button></div>
+    <div class="panel-body"><div id="sesBody"></div></div>
+  </section>
+
   <section id="panel-location" class="panel hidden">
     <div class="panel-head"><h2>Lieu d'observation</h2><button class="close" data-close="panel-location" aria-label="Fermer">×</button></div>
     <div class="panel-body">
-      <button id="geoBtn" class="btn accent">Utiliser ma position (GPS)</button>
+      <div class="row-btns"><button id="geoBtn" class="btn accent">Utiliser ma position (une fois)</button><button class="btn" type="button" data-open="live">📡 GPS en continu + boussole</button></div>
       <div id="geoStatus" class="muted"></div>
       <div class="grid2">
         <label>Nom<input id="locName" type="text" value="La Rochelle"></label>
@@ -232,7 +281,7 @@
   <!-- Barre AR -->
   <div id="arBar" class="hidden">
     <button id="ngBadge" class="ng-badge hidden" type="button" title="Conseils pour les téléphones sans gyroscope">Mode sans gyroscope <span aria-hidden="true">ⓘ</span></button>
-    <div id="arMsg"></div>
+    <div id="arMsg"></div><span id="arGps" class="ar-gps"></span>
     <div class="ar-controls">
       <label>Champ <input id="arFov" type="range" min="40" max="90" step="1" value="66"><b id="arFovVal">66°</b></label>
       <label>Cap <input id="arHead" type="range" min="-30" max="30" step="1" value="0"><b id="arHeadVal">0°</b></label>

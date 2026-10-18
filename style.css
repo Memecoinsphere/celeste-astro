@@ -462,3 +462,117 @@ body.night .kal-eclipse .pname,body.night .kal-meteor .pname{color:inherit}
   #sidebar .fab{flex:0 1 44px;min-height:34px;height:auto}
   body.ar #sidebar{bottom:calc(6px + var(--sab))}
 }
+/* ---- v14 : Ciel en direct, rappels, mode observation ---- */
+.panel-actions{display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 6px}
+.panel-actions .btn{flex:1 1 auto;min-height:40px}
+.live-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
+.live-row>div{flex:1;min-width:0}
+.live-row .btn{flex:none;min-height:40px}
+.live-err{color:#ffb38a;font-size:12.5px;line-height:1.4;margin:6px 0}
+.live-follow{display:flex;align-items:center;gap:8px;padding:10px 0;font-size:14px}
+.live-follow input{width:20px;height:20px}
+.live-dir{margin:4px 0 6px}
+.live-why{margin-top:0}
+.ses-h{margin:12px 0 6px;font-size:13px;letter-spacing:.3px;color:var(--mut);text-transform:uppercase}
+.ar-gps{font-size:11.5px;color:#ffd58a;white-space:nowrap}
+.ar-gps:empty{display:none}
+.ses-chip{position:absolute;left:calc(12px + var(--sal));top:calc(62px + var(--sat));z-index:6;padding:6px 12px;border-radius:999px;border:1px solid rgba(255,90,90,.45);background:rgba(60,0,0,.55);color:#ffb0a0;font:600 13px system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.ses-chip.hidden{display:none}
+.ses-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ses-time{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+.ses-cd{margin:8px 0}
+.ses-plan li{display:flex;align-items:flex-start;gap:8px}
+.ses-ck{flex:none;padding:4px 2px}
+.ses-ck input{width:22px;height:22px}
+.ses-main{flex:1;min-width:0;cursor:pointer}
+.ses-done .pname{text-decoration:line-through;opacity:.7}
+.ses-note{width:100%;margin-top:6px;padding:7px 9px;border-radius:9px;border:1px solid var(--line);background:rgba(0,0,0,.25);color:inherit;font-size:14px}
+.ses-del{flex:none;width:32px;height:32px;border-radius:50%;border:0;background:transparent;color:var(--mut);font-size:18px}
+.ses-notes{display:block;margin:10px 0;font-size:13px;color:var(--mut)}
+.ses-notes textarea{display:block;width:100%;margin-top:4px;padding:8px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.25);color:inherit;font:14px system-ui,sans-serif;resize:vertical}
+.kal-rap{margin:4px 0 8px}
+.kal-rap-head{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:inherit;font:600 14px system-ui,sans-serif;text-align:left}
+.kal-rap-head .chev{margin-left:auto;color:var(--mut)}
+.kal-rap-body{padding:8px 4px 2px}
+.rap-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:13.5px}
+.rap-grid label{display:flex;align-items:center;gap:6px;min-height:32px}
+.rap-grid input{width:18px;height:18px}
+.rap-act{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.rap-act .btn{flex:1 1 auto;min-height:40px}
+.rap-plat.warn{color:#ffcf8a}
+.kal-ev{position:relative}
+.kal-ics{flex:none;align-self:center;width:36px;height:36px;margin-left:4px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);font-size:16px;line-height:1}
+@media (max-width:380px){ .rap-grid{grid-template-columns:1fr} }
+body.night .ses-chip{color:#ff8a7a}
+body.session #hud{top:calc(100px + var(--sat))}
+@media (orientation:landscape) and (max-height:500px){ .ses-chip{top:auto;bottom:calc(8px + var(--sab));left:calc(8px + var(--sal));padding:5px 9px;font-size:11.5px;border-radius:12px;white-space:normal;text-align:left;max-width:calc((100% - min(600px,calc(100% - 140px)))/2 - 14px)} }
+body.ar .ses-chip,body.telmode .ses-chip{display:none}
+/* ---- v15 : dispositions « onglets » et « menu latéral » ---- */
+#tabbar,#menuBtn,.grp-nav,.menu-back{display:none}
+.menu-h{margin:14px 0 8px;font-size:12.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--mut)}
+.menu-h:first-child{margin-top:2px}
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.menu-it{display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 10px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:inherit;text-align:left;font:500 14px system-ui,sans-serif;line-height:1.2}
+.menu-it small{display:block;color:var(--mut);font-size:11px;margin-top:2px}
+.menu-it.on{border-color:rgba(122,162,255,.55);background:rgba(122,162,255,.14)}
+.mi-ico{flex:none;font-size:20px;width:26px;text-align:center}
+.menu-lay{display:flex;flex-wrap:wrap;gap:6px}
+.lay-row{display:flex!important;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.lay-row select{max-width:58%;min-height:44px;padding:7px 8px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.3);color:inherit;font-size:14px}
+body.session #laserPanel{top:calc(100px + var(--sat))}
+/* commun aux deux nouvelles dispositions : colonne de boutons réduite à l'essentiel, fiches « amarrées » */
+body.layout-onglets #sidebar .fab[data-panel],body.layout-onglets #nightBtn,body.layout-lateral #sidebar .fab[data-panel],body.layout-lateral #nightBtn{display:none}
+body.layout-onglets #sidebar,body.layout-lateral #sidebar{top:calc(62px + var(--sat));bottom:auto;transform:none;right:calc(8px + var(--sar));gap:8px}
+body.layout-onglets .fab,body.layout-lateral .fab{width:56px;height:52px}
+body.layout-onglets #laserPanel,body.layout-lateral #laserPanel{top:calc(62px + var(--sat));left:calc(8px + var(--sal));right:calc(74px + var(--sar));width:auto;transform:none}
+body.layout-onglets.session #laserPanel,body.layout-lateral.session #laserPanel{top:calc(100px + var(--sat))}
+body.layout-onglets .card,body.layout-lateral .card{left:calc(0px + var(--sal));right:calc(0px + var(--sar));width:auto;top:auto;max-height:46vh;max-height:46dvh;overflow:auto;border-radius:20px 20px 0 0;border-bottom:0;animation:none}
+body.layout-onglets.card-open #timebar,body.layout-lateral.card-open #timebar{display:none}
+body.layout-onglets .tel-fab-stop,body.layout-lateral .tel-fab-stop{left:auto;right:calc(8px + var(--sar));transform:none;bottom:auto;top:calc(186px + var(--sat));padding:10px 12px;font-size:13px}
+body.layout-onglets #toast,body.layout-lateral #toast{top:calc(140px + var(--sat))}
+/* Onglets */
+body.layout-onglets{--tabh:58px}
+body.layout-onglets #tabbar{display:flex;position:absolute;left:0;right:0;bottom:0;height:calc(var(--tabh) + var(--sab));padding:0 calc(4px + var(--sar)) var(--sab) calc(4px + var(--sal));z-index:9;background:var(--glass2);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-top:1px solid var(--line)}
+#tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:0;background:transparent;color:var(--mut);font:600 11px system-ui,sans-serif;position:relative;min-width:0}
+#tabbar .ti{font-size:19px;line-height:1}
+#tabbar button.on{color:var(--txt)}
+#tabbar button.on::before{content:'';position:absolute;top:0;left:25%;right:25%;height:3px;border-radius:0 0 3px 3px;background:linear-gradient(90deg,#7aa2ff,#b38cff)}
+body.layout-onglets #timebar{bottom:calc(var(--tabh) + var(--sab) + 6px)}
+body.layout-onglets.sheet-open #timebar{display:none}
+body.layout-onglets .panel{left:calc(0px + var(--sal));right:calc(0px + var(--sar));width:auto;top:auto;bottom:calc(var(--tabh) + var(--sab));height:min(64vh,calc(100vh - var(--tabh) - var(--sab) - 110px));height:min(64dvh,calc(100dvh - var(--tabh) - var(--sab) - 110px));max-height:none;border-radius:20px 20px 0 0;border-bottom:0;animation:none}
+body.layout-onglets .panel .panel-body{flex:1}
+body.layout-onglets .grp-nav{display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;scrollbar-width:none;flex:none}
+body.layout-onglets .grp-nav .mchip{flex:none}
+body.layout-onglets .card{bottom:calc(var(--tabh) + var(--sab))}
+body.layout-onglets #topbar .brand{margin-right:auto}
+body.layout-onglets #findBody .search{max-width:none}
+body.layout-onglets #findBody #searchResults{position:static;margin-top:8px;max-height:none}
+body.layout-onglets .tel-fab-stop{top:auto;bottom:calc(var(--tabh) + var(--sab) + 96px)}
+/* Menu latéral */
+body.layout-lateral #menuBtn{display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;font-size:20px;flex:none}
+body.layout-lateral .panel{left:0;right:auto;top:0;bottom:0;width:min(420px,88vw);height:auto;max-height:none;border-radius:0 20px 20px 0;border-left:0;padding-top:var(--sat);padding-bottom:var(--sab);z-index:12;animation:none}
+body.layout-lateral .panel .panel-body{flex:1}
+body.layout-lateral .menu-back{display:inline-flex;align-items:center;margin-right:8px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:inherit;font:600 13px system-ui,sans-serif;flex:none}
+body.layout-lateral .panel-head h2{flex:1;min-width:0}
+body.layout-lateral .card{bottom:0;padding-bottom:calc(14px + var(--sab))}
+@media (max-width:720px){ body.layout-lateral #topbar .brand{display:none} }
+/* Paysage (téléphone couché) : feuilles et fiches sur le côté gauche, le ciel reste visible à droite */
+@media (orientation:landscape) and (max-height:500px){
+  body.layout-onglets{--tabh:46px}
+  #tabbar button{flex-direction:row;gap:6px;font-size:12px}
+  body.layout-onglets .panel{left:var(--sal);right:auto;width:min(440px,55vw);top:calc(62px + var(--sat));height:auto;border-radius:0 20px 0 0}
+  body.layout-onglets .card,body.layout-lateral .card{left:var(--sal);right:auto;width:min(380px,48vw);top:calc(62px + var(--sat));max-height:none;border-radius:0 20px 0 0;border-bottom:1px solid var(--line)}
+  body.layout-onglets .card{bottom:calc(var(--tabh) + var(--sab))}
+  body.layout-lateral .card{bottom:0}
+  body.layout-lateral .panel{width:min(420px,55vw);padding-left:var(--sal)}
+  body.layout-onglets #sidebar,body.layout-lateral #sidebar{top:calc(56px + var(--sat))}
+  body.layout-onglets .fab,body.layout-lateral .fab{width:50px;height:44px}
+  body.layout-onglets #laserPanel,body.layout-lateral #laserPanel{top:calc(56px + var(--sat));right:calc(66px + var(--sar));left:auto;width:min(340px,calc(100% - 140px))}
+  body.layout-onglets.card-open #laserPanel,body.layout-lateral.card-open #laserPanel{display:none}
+  body.layout-onglets .tel-fab-stop{bottom:auto;top:calc(160px + var(--sat))}
+}
+/* Mode caméra et mode télescope : ni barre d'onglets ni menu */
+body.ar #tabbar,body.ar #menuBtn,body.telmode #tabbar,body.telmode #menuBtn,body.telmode .ses-chip{display:none!important}
+body.ar.layout-onglets .card,body.ar.layout-lateral .card{bottom:calc(var(--arbar,130px) + 12px + var(--sab))}
+body.ar.layout-onglets #timebar{display:none}
+body.layout-onglets.sheet-open #laserPanel,body.layout-onglets.card-open #laserPanel,body.layout-lateral.sheet-open #laserPanel,body.layout-lateral.card-open #laserPanel{display:none}
