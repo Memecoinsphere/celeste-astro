@@ -439,3 +439,26 @@ body.telmode #toast{top:calc(62px + var(--sat))}
   .tm-pad{grid-template-rows:repeat(3,34px)}
   body.telmode #toast{left:calc(min(380px,50vw) + (100% - min(380px,50vw)) / 2);max-width:calc(100% - min(380px,50vw) - 20px)}
 }
+/* v13 : ciel profond + calendrier du ciel */
+.kal-period{font-size:12.5px;margin:-2px 0 8px}
+.kal-chips{position:sticky;top:-2px;z-index:2;background:rgba(20,26,44,.97);padding:4px 0 6px;margin-bottom:6px}
+.kal-chips .mchip{min-height:34px;padding:5px 10px;font-size:12.5px}
+.kal-list .kal-month{list-style:none;margin:10px 0 2px;padding:0;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--mut);border:0;background:none;cursor:default;min-height:0}
+.kal-list li.kal-ev{cursor:pointer;align-items:flex-start}
+.kal-ico{flex:0 0 28px;font-size:19px;line-height:24px;text-align:center}
+.kal-ev .pmeta{white-space:normal;line-height:1.35}
+.kal-ev .pright{white-space:nowrap;text-align:right;font-size:12.5px}
+.kal-ev.kal-no .pname{opacity:.75}
+.kal-eclipse .pname{color:#ffd66e}
+.kal-meteor .pname{color:#9fd8ff}
+.kal-iss{display:flex;flex-direction:column;gap:2px;padding:10px 12px;margin:2px 0 8px;border:1px solid var(--line);border-radius:12px;color:inherit;text-decoration:none;background:rgba(255,255,255,.04)}
+.kal-iss small{color:var(--mut)}
+#kalIssApp{margin:0 0 8px}
+body.night .kal-eclipse .pname,body.night .kal-meteor .pname{color:inherit}
+@media (max-height:520px){.kal-chips{position:static}.kal-chips .mchip{min-height:30px;padding:3px 9px}.kal-period{margin-bottom:4px}}
+/* paysage très bas (iPhone) : les boutons de la barre se resserrent pour tenir en hauteur */
+@media (max-height:440px) and (orientation:landscape){
+  #sidebar{bottom:calc(6px + var(--sab));gap:4px;justify-content:flex-start}
+  #sidebar .fab{flex:0 1 44px;min-height:34px;height:auto}
+  body.ar #sidebar{bottom:calc(6px + var(--sab))}
+}

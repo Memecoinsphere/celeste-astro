@@ -44,6 +44,29 @@ Calques → « Catalogue de Messier » : les 110 objets avec un symbole par type
 M1 n'est pas dupliqué : c'est la nébuleuse du Crabe de la couche « Objets extrêmes », complétée par ses données Messier ; la fiche de M87 renvoie à son trou noir M87*. M102 : identification débattue, on retient NGC 5866 (galaxie du Fuseau).
 Données : messier.js, généré par astro-app-build/messier/build.py (positions OpenNGC, validées automatiquement contre SIMBAD, Wikipédia/SEDS et d3-celestial : écart maximal 0,25° pour M45, sous la tolérance de la moitié de la taille de l'objet ; magnitude = médiane des sources).
 
+## Ciel profond : NGC, IC, Caldwell, Herschel 400
+Calques → « Ciel profond » : quatre cases (NGC, IC, Caldwell, Herschel 400) et un curseur « Magnitude max. » (6 à 16, « toutes » tout à droite). Le catalogue (13 205 objets, fichier `deepsky.json.gz` de 221 ko) n'est téléchargé qu'au premier usage (case cochée ou recherche d'une désignation), puis gardé hors ligne.
+- **Sans doublon** : un objet = une seule entrée avec toutes ses désignations. Les 110 objets de Messier restent des fiches Messier (M31 = NGC 224 = UGC 454) ; les Dentelles du Cygne, IC 443 et le Crabe restent des « objets extrêmes ». Les 651 entrées « Dup » d'OpenNGC sont rangées comme alias de l'objet principal (ex. NGC 2244 → NGC 2239, la Rosette) ; les 10 entrées « NonEx » (objets inexistants, ex. IC 67) sont trouvées par la recherche, qui affiche « objet inexistant ».
+- **Caldwell** : C1–C109, y compris les objets hors NGC/IC (C9 Sh2-155, C41 Hyades, C99 Sac à charbon). C14 = le Double amas (NGC 869 + 884), deux objets.
+- **Herschel 400** : 398 objets distincts, pas 400 : dans la liste officielle, NGC 2372 est le même objet que NGC 2371 et NGC 6885 le même que NGC 6882 (doublons d'OpenNGC). Ils sont fusionnés.
+- **Recherche** par n'importe quelle désignation : « NGC 224 », « ngc0224 », « C 14 », « Caldwell 20 », « IC 434 », « Sh2-155 », « UGC 454 », « Mel 111 », « B 33 », ou par nom (Tarentule, Hélice…).
+- **Fiche en français** : type (et type de Hubble des galaxies), magnitude (estimée d'après la magnitude bleue si besoin), taille et orientation, constellation, distance (galaxies, d'après le décalage vers le rouge), désignations, instrument conseillé, meilleur moment de la nuit, lever/coucher. Le laser et le Mode télescope (GoTo) fonctionnent aussi sur ces objets.
+- **Rapidité (Galaxy A15)** : index spatial (cellules de 5°), seuil de magnitude qui dépend du zoom (les objets pâles n'apparaissent qu'en zoomant), au plus 700 / 450 / 260 objets tracés selon la qualité (Haute / Moyenne / Économie), icônes groupées en un seul tracé par type, aucun redessin quand rien ne bouge. Mesuré en émulation A15 (processeur bridé ×4), toutes couches allumées : 8 à 11 ms par image, y compris au cœur de l'amas de la Vierge.
+
+Données : `deepsky.json`, généré par `astro-app-build/dso/build.py` à partir d'OpenNGC (NGC.csv + addendum.csv, CC BY-SA 4.0) ; listes Caldwell et Herschel 400 d'après Wikipédia, recoupées avec les identifiants d'OpenNGC ; noms français : rédaction originale.
+
+## Calendrier du ciel (12 mois)
+Bouton « Agenda » (barre de droite) ou « Ce soir » → « Calendrier du ciel ». Tout est calculé sur le téléphone (astronomy-engine), pour le lieu choisi, des 12 mois à venir :
+- phases de la Lune (« super Lune » quand la pleine Lune est à moins de 360 000 km) ;
+- éclipses de Soleil et de Lune, avec ce qu'on voit depuis le lieu (part du Soleil cachée, hauteur de la Lune) ;
+- oppositions de Mars à Neptune, plus grandes élongations de Mercure et Vénus, éclat maximal de Vénus ;
+- équinoxes et solstices ;
+- rapprochements : Lune–planètes (≤ 3°), Lune–étoiles brillantes et Pléiades (≤ 1,5°–2,5°), planètes entre elles (≤ 2,5°) ;
+- 13 essaims d'étoiles filantes de la liste IMO (pic, ZHR, période d'activité, radiant, éclairement de la Lune) ;
+- lien vers les passages de l'ISS (Heavens-Above), et vers les passages dans l'application en mode avancé.
+
+Filtres par type. Toucher un événement règle l'heure sur le meilleur moment pour regarder (ciel noir, astre le plus haut) et vise l'astre (ou le radiant, marqué sur la carte). Une éclipse remplace la phase de Lune du même jour : pas de doublon. Vérifié contre la NASA pour 2026–2027 : les 5 éclipses (6 févr., 20 févr., 18 juil., 2 août, 17 août 2027) à 1 minute près ; oppositions d'Uranus (25 nov. 2026), de Jupiter (11 févr. 2027), de Mars (19 févr. 2027) et de Neptune (28 sept. 2027) ; solstices et équinoxes.
+
 ## Téléphones sans gyroscope (ex. Samsung Galaxy A15)
 
 Détection automatique (`devicemotion` sans `rotationRate`, ou orientation très bruitée) : badge discret **« Mode sans gyroscope »** dans le mode caméra ; le toucher affiche des conseils (faire un « 8 », retirer une coque aimantée, s'éloigner du métal) et un réglage Auto / Toujours / Jamais. Dans ce mode, l'orientation est refusionnée à partir de la gravité (accéléromètre → hauteur/inclinaison) et du cap boussole : filtre passe-bas adaptatif (fort à l'arrêt, rapide en mouvement), indépendant de la fréquence d'images, zone morte douce anti-tremblement, cap traité par angle signé (pas de saut 0/360°), rejet des pics magnétiques. Les téléphones avec gyroscope gardent le comportement habituel.
@@ -98,10 +121,12 @@ Sécurité : les objets sous l'horizon sont refusés (la hauteur minimale se rè
 **Simulateur** : choisissez « Simulateur (aucun matériel) » pour tout essayer sans télescope. La monture fictive a une erreur de pointage volontaire de 0,4°/−0,3°, pour s'entraîner au Sync. La passerelle simule aussi LX200, NexStar, Alpaca et INDI (liaison « Passerelle PC → monture simulée »).
 
 ## Fichiers
-`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `telescope.js` (contrôle de télescope), `celeste_bridge.py` (passerelle PC), `LICENSES.txt`.
+`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `telescope.js` (contrôle de télescope), `deepsky.json` / `deepsky.json.gz` (ciel profond, chargé à la demande), `celeste_bridge.py` (passerelle PC), `LICENSES.txt`.
 
 ## Limites connues
-- Catalogue limité à mag ≈ 6 (≈ 5 000 étoiles) ; pas d'objets du ciel profond (Messier) ni de satellites/ISS.
+- Étoiles limitées à mag ≈ 6 (≈ 5 000 étoiles).
+- Ciel profond : les magnitudes d'OpenNGC sont parfois absentes ou estimées (magnitude bleue − 0,7 pour les galaxies) ; distance donnée seulement pour les galaxies dont le décalage vers le rouge est connu.
+- Calendrier : rapprochements calculés vus du centre de la Terre (l'écart vu du lieu peut différer de ≈ 1° pour la Lune ; les occultations ne sont pas calculées) ; dates de pic des étoiles filantes d'après la longitude solaire moyenne de l'IMO (les pics réels varient de quelques heures) ; ZHR = taux idéal (on en voit en pratique bien moins).
 - Positions des étoiles J2000 sans mouvement propre (écart négligeable à l'œil sur quelques décennies) ; précession/nutation et réfraction appliquées via astronomy-engine.
 - Le cap boussole des téléphones est magnétique (déclinaison ≈ 0–1° en France) et sensible aux perturbations : utiliser le curseur « Cap ». Le champ caméra réel varie selon le modèle (curseur « Champ »).
 - Télescope : protocoles écrits d'après les documentations publiques (NexStar Communication Protocol, Meade LX200 Command Set, ASCOM Alpaca, INDI) et testés contre des montures **simulées** (dans le navigateur, dans la passerelle, et via un vrai port série virtuel), **jamais sur du vrai matériel**. Le sens des flèches peut être inversé selon la monture. Pas de suivi d'un satellite. Arrêt du suivi impossible sur certaines raquettes LX200 Meade (pas de commande documentée). Pas de commande de parcage dans le protocole NexStar (parquez avec la raquette).

@@ -15,9 +15,10 @@ const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const DEFAULT_LOC = { name: 'La Rochelle', lat: 46.16, lon: -1.15, tz: 'Europe/Paris' };
 const S = {
   loc: { ...DEFAULT_LOC },
-  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true, extreme: false, messier: false },
+  opts: { lines: true, conNames: true, starNames: true, grid: false, eqGrid: false, ecliptic: true, milkyway: true, ground: true, atmosphere: true, laser: true, extreme: false, messier: false, ngc: false, ic: false, caldwell: false, h400: false },
   quality: 'auto',
   magLimit: 6,
+  dsoMag: 12,
   az: 180 * DEG, alt: 28 * DEG, fov: 100 * DEG,
   anchor: Date.now(), slider: 0, live: true, playing: false, speed: 600,
   night: false, selected: null, tween: null, dirty: true
@@ -28,6 +29,7 @@ try {
     if (saved.loc && isFinite(saved.loc.lat) && isFinite(saved.loc.lon)) S.loc = { ...DEFAULT_LOC, ...saved.loc };
     if (saved.opts) Object.assign(S.opts, saved.opts);
     if (isFinite(saved.magLimit)) S.magLimit = saved.magLimit;
+    if (isFinite(saved.dsoMag)) S.dsoMag = clamp(saved.dsoMag, 6, 16);
     if (isFinite(saved.az)) { S.az = saved.az; S.alt = saved.alt; S.fov = saved.fov; }
     S.night = !!saved.night;
     if (['auto', 'high', 'medium', 'low'].includes(saved.quality)) S.quality = saved.quality;
@@ -38,7 +40,7 @@ let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { localStorage.setItem('celeste.v1', JSON.stringify({ loc: S.loc, opts: S.opts, magLimit: S.magLimit, az: S.az, alt: S.alt, fov: S.fov, night: S.night, quality: S.quality })); } catch (e) {}
+    try { localStorage.setItem('celeste.v1', JSON.stringify({ loc: S.loc, opts: S.opts, magLimit: S.magLimit, dsoMag: S.dsoMag, az: S.az, alt: S.alt, fov: S.fov, night: S.night, quality: S.quality })); } catch (e) {}
   }, 400);
 }
 const simMs = () => S.anchor + S.slider * 60000;
@@ -58,6 +60,7 @@ function fmt(kind) {
   if (kind === 'date') Object.assign(o, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   if (kind === 'dshort') Object.assign(o, { weekday: 'short', day: 'numeric' });
   if (kind === 'dmed') Object.assign(o, { weekday: 'short', day: 'numeric', month: 'short' });
+  if (kind === 'my') Object.assign(o, { month: 'long', year: 'numeric' });
   if (kind === 'parts') Object.assign(o, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   return (fmtCache[key] = new Intl.DateTimeFormat(kind === 'parts' ? 'en-US' : 'fr-FR', o));
 }
@@ -621,8 +624,10 @@ function render() {
     picks.push({ kind: 'body', bi, x, y, r: r + 4, pri: -30 });
     bodyLabels.push([bs.b.fr, x, y, r, bs.b.key]);
   }
+  drawDeepSky(groundOn);
   drawMessier(groundOn);
   drawExtreme(groundOn);
+  drawMark(groundOn);
   drawSats(camOn, groundOn);
   drawGround();
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
@@ -676,6 +681,7 @@ function selectedNEU() {
   if (s.kind === 'sat') return satNEU(s.id);
   if (s.kind === 'xo') return xoNEU(s.i);
   if (s.kind === 'mes') return mesNEU(s.i);
+  if (s.kind === 'dso') return dsoNEU(s.i);
   return null;
 }
 function drawSelection() {
@@ -720,7 +726,7 @@ function starName(i) {
   if (n && n[1]) { const c = consById[n[2]]; return `${n[1]} ${c ? c.gen : n[2]}`; }
   return `HIP ${SHIP[i]}`;
 }
-function objName(s) { if (s.kind === 'mes') return mesTitle(MES[s.i]); if (s.kind === 'xo') return XO[s.i].n.replace(/ \(.*\)$/, ''); if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
+function objName(s) { if (s.kind === 'dso') return dsoTitle(s.i); if (s.kind === 'mes') return mesTitle(MES[s.i]); if (s.kind === 'xo') return XO[s.i].n.replace(/ \(.*\)$/, ''); if (s.kind === 'sat') { const o = SAT.byId.get(s.id); return o ? o.short : 'Satellite'; } return s.kind === 'star' ? starName(s.i) : s.kind === 'body' ? BODIES[s.bi].fr : s.c.fr; }
 function spectralHint(bv) { if (bv < 0) return 'bleu-blanc (type O/B)'; if (bv < 0.3) return 'blanc (type A)'; if (bv < 0.58) return 'blanc-jaune (type F)'; if (bv < 0.81) return 'jaune (type G)'; if (bv < 1.4) return 'orangé (type K)'; return 'rouge-orangé (type M)'; }
 function riseRows(r, refMs) {
   if (r.circumpolar) return `<dt>Lever / coucher</dt><dd>Circumpolaire</dd><dt>Passage méridien</dt><dd>${hmRel(r.transit, refMs)} (${fmtDeg(r.transitAlt, 0)})</dd>`;
@@ -735,6 +741,7 @@ function renderInfo() {
   const upTag = alt => alt > 0 ? '<span class="tag ok">Au-dessus de l\'horizon</span>' : `<span class="tag no">${belowText(s, alt).replace(/^s/, 'S')}</span><br>`;
   if (s.kind === 'xo') html = xoInfoHtml(s.i, ms, upTag);
   else if (s.kind === 'mes') html = mesInfoHtml(s.i, ms, upTag);
+  else if (s.kind === 'dso') html = dsoInfoHtml(s.i, ms, upTag);
   else if (s.kind === 'sat') {
     const I = satInfoParts(s.id);
     if (!I) html = '<h3>Satellite</h3><div class="sub">Données orbitales indisponibles</div>';
@@ -838,19 +845,19 @@ function handleTap(x, y, touch) {
   for (const p of picks) {
     if (p.kind === 'con') continue;
     const d = Math.hypot(p.x - x, p.y - y) - p.r * 0.6;
-    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : p.kind === 'xo' ? -5 : p.kind === 'mes' ? -4.5 : -6);
+    const score = d + (p.kind === 'star' ? p.pri * 1.6 : p.kind === 'sat' ? -4 : p.kind === 'xo' ? -5 : p.kind === 'mes' ? -4.5 : p.kind === 'dso' ? -4 : -6);
     if (d < th && score < bd) { bd = score; best = p; }
   }
   if (!best) for (const p of picks) if (p.kind === 'con' && Math.abs(p.x - x) < p.r + 8 && Math.abs(p.y - y) < 12) { best = p; break; }
-  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : { kind: 'con', c: best.c });
+  if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : best.kind === 'dso' ? { kind: 'dso', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
 function select(s) {
-  S.selected = s; if (s && !S.telmode) closePanels(); // un seul panneau à la fois : la fiche remplace le panneau ouvert
+  S.selected = s; S.mark = null; if (s && !S.telmode) closePanels(); // un seul panneau à la fois : la fiche remplace le panneau ouvert
   if (window.CELESTE_TEL) window.CELESTE_TEL.onSelect(s); renderInfo(); S.dirty = true; syncHistory();
 }
 function objAltAz(s) {
-  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : s.kind === 'mes' ? mesNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
+  const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : s.kind === 'mes' ? mesNEU(s.i) : s.kind === 'dso' ? dsoNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   return neuToAltAz(v);
 }
 function centerOn(s, fovDeg) {
@@ -879,8 +886,9 @@ for (let i = 0; i < NS; i++) {
 const si = $('searchInput'), sr = $('searchResults'); let results = [], selIdx = 0;
 let lastQuery = '';
 function doSearch() {
-  const q = fold(si.value); lastQuery = q;
+  const q = dsoNormQuery(fold(si.value)); lastQuery = q;
   if (!q) { closeSearch(); return; }
+  const wantDso = DSO.state !== 'ok' && DSO.state !== 'err' && DSO_Q.test(q);
   const hits = [];
   for (const it of INDEX) {
     let sc = 1e9;
@@ -889,13 +897,16 @@ function doSearch() {
   }
   hits.sort((a, b) => a[0] - b[0]);
   results = hits.slice(0, 8).map(h => h[1]); selIdx = 0;
-  sr.innerHTML = results.length ? results.map((r, k) => `<li data-k="${k}" class="${k === 0 ? 'sel' : ''}"><span>${r.label}</span><small>${r.sub}</small></li>`).join('') : '<li><span class="muted">Aucun résultat</span></li>';
+  const loadDso = wantDso || (DSO.state === 'idle' && !results.length && q.length >= 3) || DSO.state === 'loading';
+  if (loadDso && DSO.state !== 'ok') dsoEnsure().then(() => { if (lastQuery === q && document.activeElement === si) doSearch(); });
+  sr.innerHTML = (loadDso && DSO.state !== 'ok' ? '<li class="muted"><span>Recherche dans NGC / IC / Caldwell (chargement…)</span></li>' : '') + (results.length ? results.map((r, k) => `<li data-k="${k}" class="${k === 0 ? 'sel' : ''}"><span>${r.label}</span><small>${r.sub}</small></li>`).join('') : (loadDso && DSO.state !== 'ok' ? '' : '<li><span class="muted">Aucun résultat</span></li>'));
   sr.classList.remove('hidden');
 }
 function closeSearch() { sr.classList.add('hidden'); }
 function pickResult(k) {
   const r = results[k]; if (!r) return;
   si.value = r.label; closeSearch(); si.blur();
+  if (r.sel.kind === 'nonex') { toast(`${r.label} : objet inexistant (entrée erronée du catalogue d'origine, rien à observer à cette position)`, 6000); return; }
   updateSky(true);
   goToObject({ ...r.sel });
 }
@@ -932,7 +943,7 @@ let toastTimer = 0;
 function toast(msg, ms = 4200) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms); }
 
 /* ---------------- Panneaux ---------------- */
-var PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier'];
+var PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier', 'calendar'];
 function openPanel(name, forceOpen) {
   const el = $('panel-' + name); const willOpen = forceOpen || el.classList.contains('hidden');
   PANELS.forEach(n => $('panel-' + n).classList.toggle('hidden', !(n === name && willOpen)));
@@ -942,6 +953,7 @@ function openPanel(name, forceOpen) {
   if (!willOpen) return;
   if (name === 'tonight') renderTonight();
   if (name === 'forecast') loadForecast();
+  if (name === 'calendar') { kalEnsure(); renderKal(); }
 }
 function openPanelName() { return (PANELS || []).find(n => !$('panel-' + n).classList.contains('hidden')) || null; }
 function closePanels() { if (!openPanelName()) return; PANELS.forEach(n => $('panel-' + n).classList.add('hidden')); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); syncHistory(); }
@@ -974,7 +986,7 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
 });
 document.querySelectorAll('[data-opt]').forEach(cb => {
   cb.checked = !!S.opts[cb.dataset.opt];
-  cb.onchange = () => { if (cb.dataset.opt === 'laser') { setLaser(cb.checked); return; } S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); };
+  cb.onchange = () => { if (cb.dataset.opt === 'laser') { setLaser(cb.checked); return; } S.opts[cb.dataset.opt] = cb.checked; S.dirty = true; save(); if (DSO_OPTS.includes(cb.dataset.opt)) { LASER.vk = ''; if (cb.checked) dsoEnsure(); } };
 });
 $('magLimit').value = S.magLimit; $('magLimitVal').textContent = num(S.magLimit, 1);
 $('magLimit').oninput = e => { S.magLimit = +e.target.value; $('magLimitVal').textContent = num(S.magLimit, 1); S.dirty = true; save(); };
@@ -1002,6 +1014,7 @@ function setLocation(loc) {
   if (!$('panel-tonight').classList.contains('hidden')) renderTonight();
   if (!$('panel-forecast').classList.contains('hidden')) loadForecast();
   MESN = null; renderMarathon();
+  if (!$('panel-calendar').classList.contains('hidden')) kalEnsure();
   renderInfo();
 }
 $('locApply').onclick = () => {
@@ -1086,7 +1099,9 @@ function renderTonight() {
      <div class="pright">Meilleur : <b>${hmRel(r.best.tm, ref)}</b><br><span class="muted">${fmtDeg(r.best.alt, 0)} · ${cardinal(r.best.az)}</span></div></li>`).join('') : '<li class="muted">Aucune planète bien placée cette nuit.</li>'}</ul>
   ${hid.length ? `<div class="fine">Non visibles cette nuit : ${hid.map(r => r.b.fr).join(', ')}.</div>` : ''}
   <p class="fine">« Meilleur » = moment de hauteur maximale entre la fin du crépuscule civil et l'aube civile. Heures : ${S.loc.tz}.</p>
-  <button id="tonMesBtn" class="btn" type="button" style="width:100%">Ciel profond : marathon Messier de la nuit →</button>`;
+  <button id="tonMesBtn" class="btn" type="button" style="width:100%">Ciel profond : marathon Messier de la nuit →</button>
+  <button id="tonCalBtn" class="btn" type="button" style="width:100%;margin-top:8px">📅 Calendrier du ciel : éclipses, pluies d'étoiles filantes… (12 mois) →</button>`;
+  $('tonCalBtn').onclick = () => openPanel('calendar', true);
   $('tonMesBtn').onclick = () => { openPanel('messier', true); renderMarathon(); };
   drawMoonIcon($('moonIcon'), elong, il.phase_angle);
   document.querySelectorAll('.plist li[data-body]').forEach(li => li.onclick = () => {
@@ -1261,11 +1276,12 @@ function xoIcon(t, x, y, c) {
 const xoLab = [], xoLabF = [];
 function drawExtreme(groundOn) {
   const selI = S.selected && S.selected.kind === 'xo' ? S.selected.i : -1, lzI = LASER.target && LASER.target.kind === 'xo' ? LASER.target.i : -1;
-  if (!S.opts.extreme && selI < 0 && lzI < 0) return;
+  const dsoX = DSO.state === 'ok' && dsoOn();
+  if (!S.opts.extreme && !dsoX && selI < 0 && lzI < 0) return;
   xoUpdate();
   ctx.save(); ctx.font = '600 11.5px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   for (let i = 0; i < XO.length; i++) {
-    if (!S.opts.extreme && i !== selI && i !== lzI) continue;
+    if (!S.opts.extreme && !(dsoX && dsoXoOn(i)) && i !== selI && i !== lzI) continue;
     const o = XO[i], v = o.neu; if (groundOn && v[2] < -0.01) continue;
     if (!proj(v[0], v[1], v[2]) || !onScreen(14)) continue;
     const x = P.x, y = P.y, c = XO_TYPES[o.t].col;
@@ -1293,7 +1309,7 @@ function xoInfoHtml(i, ms, upTag) {
   <dl class="kv"><dt>Type</dt><dd>${T.fr}</dd><dt>Distance</dt><dd>${o.d}</dd>${o.m ? `<dt>Masse</dt><dd>${o.m}</dd>` : ''}${o.per ? `<dt>Période de rotation</dt><dd>${o.per < 0.1 ? num(o.per * 1000, 2) + ' ms' : num(o.per, 3) + ' s'}</dd>` : ''}${o.b ? `<dt>Champ magnétique</dt><dd>${o.b}</dd>` : ''}
   <dt>Magnitude</dt><dd>${o.v != null ? num(o.v, 1) : '—'}</dd><dt>Observation</dt><dd>${o.vn}</dd>
   <dt>Asc. droite (J2000)</dt><dd>${fmtRA(o.ra / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(o.de)}</dd><dt>Altitude</dt><dd>${fmtDeg(aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(aa.az)} ${cardinal(aa.az)}</dd>${riseRows(r, ms)}
-  ${mi >= 0 ? mesExtraRows(MES[mi], ms, mi, true) : ''}
+  ${mi >= 0 ? mesExtraRows(MES[mi], ms, mi, true) : xoDesigRow(i)}
   <dt>Sources</dt><dd>SIMBAD « ${o.sim} » ; ${o.src}</dd></dl>${host >= 0 ? `<button class="btn mini mes-link" data-goto="mes:${host}" type="button">⬮ Sa galaxie hôte : M87 (catalogue de Messier) →</button>` : ''}`;
 }
 const XO_GLYPH = { bh: '◉', snr: '✺', psr: '⊘', mag: '∞', qso: '◆', star: '✩' };
@@ -1350,13 +1366,14 @@ const mesLab = [], mesLabF = [], mesAx1 = [0, 0], mesAx2 = [0, 0];
 function drawMessier(groundOn) {
   const sel = S.selected, lz = LASER.target;
   const selI = sel && sel.kind === 'mes' ? sel.i : -1, lzI = lz && lz.kind === 'mes' ? lz.i : -1;
-  if (!S.opts.messier && selI < 0 && lzI < 0) return;
+  const dsoM = DSO.state === 'ok' && dsoOn();
+  if (!S.opts.messier && !dsoM && selI < 0 && lzI < 0) return;
   mesUpdate();
-  const m1byXO = S.opts.extreme || (sel && sel.kind === 'xo') || (lz && lz.kind === 'xo'); // le Crabe est alors déjà dessiné par la couche « objets extrêmes »
+  const m1byXO = S.opts.extreme || (dsoM && MES.some(o => o.xo === 'm1' && o.xoI >= 0 && dsoXoOn(o.xoI))) || (sel && sel.kind === 'xo') || (lz && lz.kind === 'xo'); // le Crabe est alors déjà dessiné par la couche « objets extrêmes »
   const pxPerArcmin = V.s * DEG / 60, labNames = V.fovDeg < 40;
   ctx.save(); ctx.font = '600 11px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   for (const i of MES_ORDER) {
-    if (!S.opts.messier && i !== selI && i !== lzI) continue;
+    if (!S.opts.messier && !(dsoM && dsoMesOn(i)) && i !== selI && i !== lzI) continue;
     const o = MES[i];
     if (o.xo === 'm1' && m1byXO) continue;
     const v = o.neu; if (groundOn && v[2] < -0.01) continue;
@@ -1427,7 +1444,7 @@ function mesLinkHtml(o) {
 }
 function mesExtraRows(o, ms, i, noMag) {
   const vis = mesVis(o.mag);
-  return `<dt>Catalogue de Messier</dt><dd>M${o.m}${o.ngc ? ' · ' + o.ngc : ''}</dd>${noMag ? '' : `<dt>Magnitude visuelle</dt><dd>${num(o.mag, 1)}</dd>`}<dt>Taille apparente</dt><dd>${fmtSize(o)}${o.pa != null ? ` · orientation ${Math.round(o.pa)}°` : ''}</dd>
+  return `<dt>Catalogue de Messier</dt><dd>M${o.m}${o.ngc ? ' · ' + o.ngc : ''}</dd>${mesDesigRow(i)}${noMag ? '' : `<dt>Magnitude visuelle</dt><dd>${num(o.mag, 1)}</dd>`}<dt>Taille apparente</dt><dd>${fmtSize(o)}${o.pa != null ? ` · orientation ${Math.round(o.pa)}°` : ''}</dd>
   <dt>Instrument</dt><dd>${vis[1]}</dd><dt>Meilleur moment ce soir</dt><dd>${mesBestText(i, ms)}</dd>`;
 }
 function mesInfoHtml(i, ms, upTag) {
@@ -1464,14 +1481,551 @@ function renderMarathon() {
   el.querySelectorAll('li[data-mes]').forEach(li => li.onclick = () => { const s = mesSel(+li.dataset.mes); if (window.innerWidth <= 720) $('panel-messier').classList.add('hidden'); goToObject(s); });
 }
 
+/* ---------------- Ciel profond : NGC, IC, Caldwell, Herschel 400 (deepsky.json.gz : OpenNGC, chargé seulement à la demande) ---------------- */
+const DSO_OPTS = ['ngc', 'ic', 'caldwell', 'h400'];
+const DSO = { state: 'idle', n: 0, prom: null, err: '', mesF: new Uint8Array(MES.length), xoF: new Uint8Array(XO.length), mesIds: [], xoIds: [], mesCw: [], xoCw: [], drawn: 0, cand: 0, stamp: 1 };
+const DSO_T = {
+  gs: ['Galaxie spirale', '255,150,150', '⬬', 'gs'], gb: ['Galaxie spirale barrée', '255,150,150', '⬬', 'gs'], ge: ['Galaxie elliptique', '255,175,150', '⬮', 'ge'],
+  gl: ['Galaxie lenticulaire', '255,150,150', '⬬', 'gs'], gi: ['Galaxie irrégulière', '255,150,150', '⬬', 'gs'], gx: ['Galaxie', '255,150,150', '⬬', 'gs'],
+  gg: ['Groupe de galaxies', '255,150,150', '⬬', 'gs'], gc: ['Amas globulaire', '255,190,105', '⊕', 'gc'], oc: ['Amas ouvert', '255,226,120', '⁘', 'oc'],
+  cn: ['Amas ouvert avec nébulosité', '110,215,235', '▢', 'neb'], pn: ['Nébuleuse planétaire', '120,240,170', '⊙', 'pn'], neb: ['Nébuleuse', '110,215,235', '▢', 'neb'],
+  hii: ['Nébuleuse en émission (région HII)', '110,215,235', '▢', 'neb'], emn: ['Nébuleuse en émission', '110,215,235', '▢', 'neb'], rfn: ['Nébuleuse par réflexion', '140,180,255', '▢', 'neb'],
+  snr: ['Rémanent de supernova', '255,160,90', '✺', 'snr'], ass: ['Association d\'étoiles', '225,230,255', '⁙', 'ast'], st: ['Étoile (entrée du catalogue)', '225,230,255', '✧', 'st'],
+  dbl: ['Étoile double', '225,230,255', '‥', 'dbl'], oth: ['Objet non classé', '190,190,210', '◇', 'oth'], nova: ['Nova historique', '255,200,200', '✧', 'st'], drk: ['Nébuleuse obscure', '150,150,170', '▩', 'drk']
+};
+const DSO_KW = { gs: 'galaxie spirale', gb: 'galaxie spirale barree', ge: 'galaxie elliptique', gl: 'galaxie lenticulaire', gi: 'galaxie irreguliere', gx: 'galaxie', gg: 'groupe de galaxies', gc: 'amas globulaire', oc: 'amas ouvert', cn: 'amas ouvert nebuleuse', pn: 'nebuleuse planetaire', neb: 'nebuleuse', hii: 'nebuleuse region hii', emn: 'nebuleuse emission', rfn: 'nebuleuse reflexion', snr: 'supernova', ass: 'association', st: 'etoile', dbl: 'etoile double', oth: '', nova: 'nova', drk: 'nebuleuse obscure' };
+const dsoOn = () => DSO_OPTS.some(k => S.opts[k]);
+const dsoMask = () => (S.opts.ngc ? 1 | 16 : 0) | (S.opts.ic ? 2 : 0) | (S.opts.caldwell ? 4 : 0) | (S.opts.h400 ? 8 : 0);
+function dsoStatus() {
+  const el = $('dsoStatus'); if (!el) return;
+  el.textContent = DSO.state === 'ok' ? `${DSO.n.toLocaleString('fr-FR')} objets chargés (NGC, IC, Caldwell, Herschel 400), sans doublon avec Messier` : DSO.state === 'loading' ? 'Chargement du catalogue (≈ 220 ko)…' : DSO.state === 'err' ? (location.protocol === 'file:' ? 'Catalogue indisponible en fichier local : ouvrez l\'application depuis son site (ou un petit serveur local).' : 'Catalogue indisponible (hors ligne ?) : ' + DSO.err) : 'Chargé seulement quand une couche est activée (≈ 220 ko).';
+}
+async function dsoFetch() {
+  if ('DecompressionStream' in window) {
+    try { const r = await fetch('deepsky.json.gz'); if (r.ok) { const txt = await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text(); return JSON.parse(txt); } } catch (e) { /* repli sur la version non compressée */ }
+  }
+  const r = await fetch('deepsky.json'); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+}
+function dsoEnsure() {
+  if (DSO.prom) return DSO.prom;
+  DSO.state = 'loading'; dsoStatus();
+  DSO.prom = dsoFetch().then(d => { dsoInit(d); DSO.state = 'ok'; dsoStatus(); S.dirty = true; if (S.selected) renderInfo(); })
+    .catch(e => { DSO.state = 'err'; DSO.err = e.message || String(e); DSO.prom = null; dsoStatus(); });
+  return DSO.prom;
+}
+function dsoInit(d) {
+  const n = d.n; DSO.n = n;
+  const X = DSO.X = new Float32Array(n), Y = DSO.Y = new Float32Array(n), Z = DSO.Z = new Float32Array(n), RA = DSO.RA = new Float32Array(n), DE = DSO.DE = new Float32Array(n);
+  const MAG = DSO.MAG = new Float32Array(n), MAGE = DSO.MAGE = new Float32Array(n), T = DSO.T = new Uint8Array(n), F = DSO.F = new Uint8Array(n);
+  DSO.MB = new Uint8Array(n); DSO.A = new Float32Array(n); DSO.B = new Float32Array(n); DSO.PA = new Int16Array(n); DSO.CON = new Uint8Array(n); DSO.CW = new Uint8Array(n); DSO.ZR = new Float32Array(n);
+  DSO.codes = d.codes; DSO.cons = d.cons; DSO.ids = d.id.split('\n'); DSO.nm = d.nm.split('\n'); DSO.hub = d.h.split('\n'); DSO.seen = new Uint32Array(n);
+  for (let i = 0; i < n; i++) {
+    const ra = d.ra[i] / 1000, de = d.de[i] / 1000, a = ra * DEG, dd = de * DEG;
+    RA[i] = ra; DE[i] = de; X[i] = Math.cos(dd) * Math.cos(a); Y[i] = Math.cos(dd) * Math.sin(a); Z[i] = Math.sin(dd);
+    T[i] = d.t.charCodeAt(i) - 48; F[i] = d.f.charCodeAt(i) - 48; DSO.MB[i] = d.mb.charCodeAt(i) - 48;
+    MAG[i] = d.m[i] >= 999 ? 99 : d.m[i] / 10; DSO.A[i] = d.a[i] / 10; DSO.B[i] = d.b[i] / 10; DSO.PA[i] = d.pa[i]; DSO.CON[i] = d.c[i]; DSO.CW[i] = d.cw[i]; DSO.ZR[i] = d.z[i] / 1e5;
+    MAGE[i] = MAG[i] < 99 ? MAG[i] : (F[i] & 12 ? 9 : 15); // magnitude inconnue : objets Caldwell / H400 toujours montrés, les autres seulement de près
+  }
+  // index spatial : bandes de 5° en déclinaison, cellules ≈ 5° en ascension droite ; chaque cellule triée par éclat
+  const NB = 36, bandN = [], bandOff = [0];
+  for (let b = 0; b < NB; b++) { const dc = Math.min(Math.abs(-90 + b * 5), Math.abs(-90 + b * 5 + 5)); const nc = Math.max(1, Math.floor(72 * Math.cos(dc * DEG))); bandN.push(nc); bandOff.push(bandOff[b] + nc); }
+  const nCell = bandOff[NB], cellOf = new Int32Array(n), cnt = new Int32Array(nCell + 1);
+  for (let i = 0; i < n; i++) { const b = Math.min(NB - 1, Math.floor((DE[i] + 90) / 5)), c = bandOff[b] + Math.min(bandN[b] - 1, Math.floor(RA[i] / 360 * bandN[b])); cellOf[i] = c; cnt[c + 1]++; }
+  for (let c = 0; c < nCell; c++) cnt[c + 1] += cnt[c];
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => MAGE[a] - MAGE[b]), idx = new Int32Array(n), fill = cnt.slice();
+  for (const i of order) idx[fill[cellOf[i]]++] = i;
+  Object.assign(DSO, { NB, bandN, bandOff, cellStart: cnt, cellIdx: idx });
+  DSO.special = order.filter(i => F[i] & 12); // Caldwell + Herschel 400 (~490 objets) : parcourus à part
+  // désignations des objets fusionnés avec Messier / objets extrêmes (une seule entrée par objet)
+  for (const [, tgt, ids, cw, h4] of d.alias) {
+    const fl = (ids.some(x => x.startsWith('NGC ')) ? 1 : 0) | (ids.some(x => x.startsWith('IC ')) ? 2 : 0) | (cw ? 4 : 0) | (h4 ? 8 : 0);
+    const [k, v] = tgt.split(':');
+    let e = null;
+    if (k === 'm') { const mi = MES.findIndex(o => o.m === +v); if (mi < 0) continue; DSO.mesF[mi] |= fl; (DSO.mesIds[mi] = DSO.mesIds[mi] || []).push(...ids); if (cw) DSO.mesCw[mi] = cw; if (h4) DSO.mesF[mi] |= 8;
+      const s = mesSel(mi); e = INDEX.find(x => x.sel.kind === s.kind && x.sel.i === s.i); if (s.kind === 'xo') { DSO.xoF[s.i] |= fl; (DSO.xoIds[s.i] = DSO.xoIds[s.i] || []).push(...ids); } }
+    else { const xi = XO.findIndex(o => o.id === v); if (xi < 0) continue; DSO.xoF[xi] |= fl; (DSO.xoIds[xi] = DSO.xoIds[xi] || []).push(...ids); if (cw) DSO.xoCw[xi] = cw; e = INDEX.find(x => x.sel.kind === 'xo' && x.sel.i === xi); }
+    if (e) { for (const x of ids) e.keys.push(...desigKeys(x)); if (cw) e.keys.push('c ' + cw, 'caldwell ' + cw); if (h4) e.keys.push('herschel 400', 'h400'); }
+  }
+  // recherche : chaque objet une seule fois, sous toutes ses désignations
+  for (let i = 0; i < n; i++) {
+    const ids = DSO.ids[i].split('|'), nm = DSO.nm[i].split('|'), keys = [];
+    for (const x of ids) keys.push(...desigKeys(x));
+    for (const x of nm) if (x) keys.push(fold(x));
+    if (DSO.CW[i]) keys.push('c ' + DSO.CW[i], 'caldwell ' + DSO.CW[i]);
+    if (F[i] & 8) keys.push('herschel 400', 'h400');
+    const t = DSO_T[DSO.codes[T[i]]];
+    INDEX.push({ label: dsoTitle(i), sub: `${t[0]} · ${consFr(DSO.cons[DSO.CON[i]]) || DSO.cons[DSO.CON[i]]}${MAG[i] < 99 ? ' · mag ' + num(MAG[i], 1) : ''} · ${dsoCatText(i)}`, keys, sel: { kind: 'dso', i }, rank: 1.6 + Math.min(MAGE[i], 20) / 40, dso: 1 });
+  }
+  for (const x of d.nonex) INDEX.push({ label: x, sub: 'Objet inexistant (erreur du catalogue d\'origine)', keys: desigKeys(x), sel: { kind: 'nonex', name: x }, rank: 5 });
+}
+function desigKeys(x) { // « NGC 224 » -> « ngc 224 », « ngc224 » ; « UGC 00454 » -> « ugc 454 »
+  const f = fold(x), m = f.match(/^(sh2|[a-z]+)[\s-]*0*(\d.*)$/);
+  return m ? [m[1] + ' ' + m[2], m[1] + m[2]] : [f];
+}
+const dsoIds = i => DSO.ids[i].split('|');
+const dsoName = i => { const nm = DSO.nm[i].split('|'); return nm[0] || ''; };
+function dsoMain(i) { const ids = dsoIds(i); return ids[0] || (DSO.CW[i] ? 'C' + DSO.CW[i] : 'Objet'); }
+function dsoTitle(i) { const n = dsoName(i), m = dsoMain(i); return n && !n.includes(m) ? `${m} · ${n}` : (n || m); }
+function dsoLabel(i, long) { const m = DSO.CW[i] && !(DSO.F[i] & 3) ? 'C' + DSO.CW[i] : dsoMain(i).replace('NGC ', 'N').replace('IC ', 'IC'); return long && dsoName(i) ? m + ' ' + dsoName(i) : m; }
+function dsoCatText(i) { const f = DSO.F[i], c = []; if (f & 1) c.push('NGC'); if (f & 2) c.push('IC'); if (DSO.CW[i]) c.push('Caldwell C' + DSO.CW[i]); if (f & 8) c.push('Herschel 400'); return c.join(' · ') || 'hors catalogue NGC/IC'; }
+function dsoNEU(i, out = [0, 0, 0]) { return eqjToNEU(DSO.X[i], DSO.Y[i], DSO.Z[i], out); }
+function dsoV3(i) { return [DSO.X[i], DSO.Y[i], DSO.Z[i]]; }
+function dsoVisText(i) {
+  const m = DSO.MAG[i], t = DSO.codes[DSO.T[i]];
+  if (m >= 99) return ['', t === 'drk' ? 'Ciel très noir, grand champ (silhouette sur fond lumineux)' : 'Magnitude inconnue (objet pâle ou étendu)'];
+  if (m <= 5) return ['ok', 'Œil nu (ciel noir)']; if (m <= 8.5) return ['ok', 'Jumelles']; if (m <= 11) return ['', 'Petit télescope (60–100 mm)'];
+  if (m <= 13.5) return ['', 'Télescope 150–250 mm']; return ['no', 'Grand télescope ou photographie'];
+}
+/* direction centrale de la vue en J2000 et rayon angulaire couvrant l'écran */
+function viewEqj() {
+  const m = rot, hx = V.fN, hy = -V.fE, hz = V.fU;
+  const x = m[0][0] * hx + m[0][1] * hy + m[0][2] * hz, y = m[1][0] * hx + m[1][1] * hy + m[1][2] * hz, z = m[2][0] * hx + m[2][1] * hy + m[2][2] * hz;
+  const rpx = Math.max(Math.hypot(V.cx, V.cy), Math.hypot(W - V.cx, V.cy), Math.hypot(V.cx, H - V.cy), Math.hypot(W - V.cx, H - V.cy));
+  const r = V.gnomonic ? Math.atan(rpx / V.s) * RAD : 2 * Math.atan(rpx / (2 * V.s)) * RAD;
+  return { ra: norm360(Math.atan2(y, x) * RAD), dec: Math.asin(clamp(z, -1, 1)) * RAD, r: Math.min(180, r + 2) };
+}
+function dsoQuery(ra, dec, r, lim, cb) { // parcourt les cellules qui recoupent le cône (centre, rayon r°), objets jusqu'à la magnitude lim
+  const { NB, bandN, bandOff, cellStart, cellIdx, MAGE } = DSO;
+  const b0 = Math.max(0, Math.floor((dec - r + 90) / 5)), b1 = Math.min(NB - 1, Math.floor((dec + r + 90) / 5));
+  for (let b = b0; b <= b1; b++) {
+    const nc = bandN[b];
+    const half = Math.abs(dec) + r >= 89.9 || r >= 90 ? 180 : Math.asin(clamp(Math.sin(r * DEG) / Math.cos(dec * DEG), -1, 1)) * RAD + 360 / nc;
+    const c0 = half >= 180 ? 0 : Math.floor((ra - half) / 360 * nc), c1 = half >= 180 ? nc - 1 : Math.floor((ra + half) / 360 * nc);
+    for (let cc = c0; cc <= c1; cc++) {
+      const c = bandOff[b] + ((cc % nc) + nc) % nc, e = cellStart[c + 1];
+      for (let k = cellStart[c]; k < e; k++) { const i = cellIdx[k]; if (MAGE[i] > lim) break; cb(i); }
+      if (half >= 180 && cc === nc - 1) break;
+    }
+  }
+}
+const DSO_CAP = [700, 450, 260]; // objets dessinés au plus, selon le niveau de qualité
+function dsoZoomLim() { return clamp(8.6 + 2.4 * Math.log2(100 / Math.max(1, V.fovDeg)), 7.5, 17); }
+const dsoCandI = [], dsoCandX = new Float32Array(4000), dsoCandY = new Float32Array(4000), dsoCandS = new Float32Array(4000), dsoLab = [];
+const dsoTmp = [0, 0, 0], dsoAx1 = [0, 0], dsoAx2 = [0, 0];
+function drawDeepSky(groundOn) {
+  const sel = S.selected, lz = LASER.target;
+  const selI = sel && sel.kind === 'dso' ? sel.i : -1, lzI = lz && lz.kind === 'dso' ? lz.i : -1;
+  DSO.drawn = 0; DSO.cand = 0;
+  if (DSO.state !== 'ok' || (!dsoOn() && selI < 0 && lzI < 0)) return;
+  const mask = dsoMask(), user = S.dsoMag >= 16 ? 99 : S.dsoMag, zl = Math.min(user, dsoZoomLim()), cap = DSO_CAP[Q.level] || 260;
+  const stamp = ++DSO.stamp, seen = DSO.seen, F = DSO.F, MAGE = DSO.MAGE;
+  let nC = 0;
+  const pxPerArcmin = V.s * DEG / 60;
+  const consider = i => {
+    if (seen[i] === stamp || nC >= 4000) return; seen[i] = stamp;
+    if (i !== selI && i !== lzI && !(F[i] & mask)) return;
+    dsoNEU(i, dsoTmp); if (groundOn && dsoTmp[2] < -0.01) return;
+    const semi = DSO.A[i] / 2 * pxPerArcmin;
+    if (!proj(dsoTmp[0], dsoTmp[1], dsoTmp[2]) || !onScreen(12 + Math.min(semi, 400))) return;
+    dsoCandI[nC] = i; dsoCandX[nC] = P.x; dsoCandY[nC] = P.y; dsoCandS[nC] = semi; nC++;
+  };
+  if (dsoOn()) {
+    const ve = viewEqj();
+    dsoQuery(ve.ra, ve.dec, ve.r, zl, consider);
+    if (mask & 12) for (const i of DSO.special) if (MAGE[i] <= user) consider(i); // Caldwell / H400 : peu nombreux, toujours montrés
+  }
+  if (selI >= 0) consider(selI); if (lzI >= 0) consider(lzI);
+  DSO.cand = nC;
+  // plafond : les plus brillants d'abord (la sélection et la cible du laser toujours)
+  let ord = null;
+  if (nC > cap) { ord = Array.from({ length: nC }, (_, k) => k).sort((a, b) => MAGE[dsoCandI[a]] - MAGE[dsoCandI[b]]); ord = ord.filter((k, j) => j < cap || dsoCandI[k] === selI || dsoCandI[k] === lzI); }
+  const list = ord || Array.from({ length: nC }, (_, k) => k);
+  DSO.drawn = list.length;
+  // icônes groupées par forme : un seul tracé par type (rapide sur téléphone)
+  const groups = {};
+  ctx.save(); ctx.lineWidth = 1.2;
+  for (const k of list) {
+    const i = dsoCandI[k], x = dsoCandX[k], y = dsoCandY[k], semi = dsoCandS[k], code = DSO.codes[DSO.T[i]], T = DSO_T[code];
+    let rLab = 7;
+    if (semi >= 9 && DSO.A[i] > 0) { // assez grand à l'écran : vraie taille et orientation
+      const a = DSO.RA[i] * DEG, d = DSO.DE[i] * DEG, o = { v3: dsoV3(i), nv: [-Math.sin(d) * Math.cos(a), -Math.sin(d) * Math.sin(a), Math.cos(d)], ev: [-Math.sin(a), Math.cos(a), 0] };
+      const pa = DSO.PA[i] < 0 ? 0 : DSO.PA[i], bmin = DSO.B[i] > 0 ? DSO.B[i] : DSO.A[i];
+      if (mesAxisPx(o, x, y, DSO.A[i] / 120 * DEG, pa, dsoAx1) && mesAxisPx(o, x, y, bmin / 120 * DEG, pa + 90, dsoAx2)) {
+        const ra_ = Math.hypot(dsoAx1[0], dsoAx1[1]), rb = Math.hypot(dsoAx2[0], dsoAx2[1]), ang = Math.atan2(dsoAx1[1], dsoAx1[0]);
+        ctx.beginPath(); ctx.ellipse(x, y, ra_, Math.max(1, rb), ang, 0, 6.2832);
+        ctx.fillStyle = `rgba(${T[1]},.06)`; ctx.fill(); ctx.strokeStyle = `rgba(${T[1]},.7)`;
+        if (code === 'oc' || code === 'ass' || code === 'drk') ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+        rLab = Math.min(Math.max(ra_, rb), 60);
+      }
+    } else (groups[T[3]] = groups[T[3]] || []).push(x, y, T[1]);
+    picks.push({ kind: 'dso', i, x, y, r: Math.min(30, Math.max(10, rLab * 0.8)), pri: -6.5 });
+    dsoLab.push(i, x, y, rLab);
+  }
+  for (const g in groups) dsoIcons(g, groups[g]);
+  // étiquettes : sélection d'abord, puis les plus brillants s'il reste de la place
+  ctx.font = '600 10.5px system-ui,sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  const long = V.fovDeg < 30, maxLab = V.fovDeg > 100 ? 25 : V.fovDeg > 50 ? 60 : 140;
+  let nl = 0;
+  for (let k = 0; k < dsoLab.length; k += 4) {
+    const i = dsoLab[k], force = i === selI || i === lzI; if (!force && nl >= maxLab) continue;
+    const x = dsoLab[k + 1], y = dsoLab[k + 2], dx = dsoLab[k + 3] * 0.72 + 3, lab = dsoLabel(i, long), tw = textW(lab, ctx.font);
+    const lx = x + dx + tw > W - 4 ? Math.max(4, x - dx - tw) : x + dx;
+    if (labelFits(lx, y - 6, tw, 12) || force) { ctx.fillStyle = `rgba(${DSO_T[DSO.codes[DSO.T[i]]][1]},.8)`; ctx.fillText(lab, lx, y); nl++; }
+  }
+  dsoLab.length = 0;
+  ctx.restore();
+}
+function dsoIcons(shape, a) { // a = [x, y, couleur, ...] : un tracé par couleur
+  const byCol = {};
+  for (let k = 0; k < a.length; k += 3) (byCol[a[k + 2]] = byCol[a[k + 2]] || []).push(a[k], a[k + 1]);
+  for (const col in byCol) {
+    const p = byCol[col]; ctx.strokeStyle = `rgba(${col},.85)`; ctx.fillStyle = `rgba(${col},.85)`; ctx.beginPath();
+    for (let k = 0; k < p.length; k += 2) {
+      const x = p[k], y = p[k + 1];
+      if (shape === 'gs') { ctx.moveTo(x + 4.827, y - 2.637); ctx.ellipse(x, y, 5.5, 2.4, -0.5, 0, 6.2832); }
+      else if (shape === 'ge') { ctx.moveTo(x + 3.949, y - 2.157); ctx.ellipse(x, y, 4.5, 3.2, -0.5, 0, 6.2832); }
+      else if (shape === 'gc') { ctx.moveTo(x + 4.2, y); ctx.arc(x, y, 4.2, 0, 6.2832); ctx.moveTo(x - 4.2, y); ctx.lineTo(x + 4.2, y); ctx.moveTo(x, y - 4.2); ctx.lineTo(x, y + 4.2); }
+      else if (shape === 'oc' || shape === 'ast') { ctx.moveTo(x + 5, y); ctx.arc(x, y, 5, 0, 6.2832); }
+      else if (shape === 'pn') { ctx.moveTo(x + 2.8, y); ctx.arc(x, y, 2.8, 0, 6.2832); ctx.moveTo(x - 6, y); ctx.lineTo(x - 2.8, y); ctx.moveTo(x + 2.8, y); ctx.lineTo(x + 6, y); ctx.moveTo(x, y - 6); ctx.lineTo(x, y - 2.8); ctx.moveTo(x, y + 2.8); ctx.lineTo(x, y + 6); }
+      else if (shape === 'neb' || shape === 'drk') { ctx.rect(x - 4.2, y - 4.2, 8.4, 8.4); }
+      else if (shape === 'snr') { for (let j = 0; j < 6; j++) { const t = j * 1.047; ctx.moveTo(x + Math.cos(t) * 2, y + Math.sin(t) * 2); ctx.lineTo(x + Math.cos(t) * 5.5, y + Math.sin(t) * 5.5); } }
+      else if (shape === 'st') { ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4); }
+      else if (shape === 'dbl') { ctx.moveTo(x - 1, y); ctx.arc(x - 2.5, y, 1.5, 0, 6.2832); ctx.moveTo(x + 4, y); ctx.arc(x + 2.5, y, 1.5, 0, 6.2832); }
+      else { ctx.moveTo(x, y - 4); ctx.lineTo(x + 4, y); ctx.lineTo(x, y + 4); ctx.lineTo(x - 4, y); ctx.closePath(); }
+    }
+    if (shape === 'oc' || shape === 'ast' || shape === 'drk') ctx.setLineDash([1.5, 2]);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+/* meilleure hauteur pendant la nuit noire (même calcul que Messier, pour un vecteur quelconque) */
+function nightBest(v, key) {
+  const N = mesNight(); N.bestMap = N.bestMap || new Map(); if (N.bestMap.has(key)) return N.bestMap.get(key);
+  let best = null;
+  for (const s of N.steps) {
+    const m = s.m, hx = m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2], hy = m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2], hz = m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2];
+    const alt = Math.asin(clamp(hz, -1, 1)) * RAD; if (!best || alt > best.alt) best = { alt, az: norm360(Math.atan2(-hy, hx) * RAD), t: s.t };
+  }
+  best = best || { alt: -90, az: 0, t: null }; if (N.bestMap.size > 400) N.bestMap.clear(); N.bestMap.set(key, best); return best;
+}
+function bestTextFor(b, N, ms) {
+  if (!N.a) return 'pas de nuit (Soleil toujours au-dessus de −6°)';
+  if (b.alt < MES_MIN_ALT) return b.alt < 0 ? 'non observable cette nuit (sous l\'horizon pendant la nuit)' : `trop bas cette nuit (${fmtDeg(b.alt, 0)} au mieux)`;
+  return `${hmRel(b.t, ms)} · ${fmtDeg(b.alt, 0)} ${cardinal(b.az)}${b.t <= N.a + 1 ? ' (dès la nuit tombée, puis il descend)' : b.t >= N.b - 600001 ? ' (en fin de nuit, avant l\'aube)' : ''}`;
+}
+function fmtArcmin(a, b) { const f = v => v >= 60 ? num(v / 60, 1) + '°' : v >= 10 ? Math.round(v) + '′' : v >= 1 ? num(v, 1) + '′' : Math.round(v * 60) + '″'; return !a ? '—' : !b || Math.abs(a - b) < 0.05 * a ? f(a) : `${f(a)} × ${f(b)}`; }
+function dsoDist(i) {
+  const z = DSO.ZR[i]; if (!(z > 0.002)) return null;
+  const mpc = z * 299792.458 / 70, mly = mpc * 3.26156;
+  return `≈ ${mly >= 1000 ? num(mly / 1000, 1) + ' milliard' + (mly >= 2000 ? 's' : '') : Math.round(mly).toLocaleString('fr-FR') + ' millions'} d'al <span class="muted">(décalage vers le rouge z = ${num(z, 4)}, H₀ = 70)</span>`;
+}
+function desigHtml(ids, cw, h4, extra) {
+  const all = [...(extra || []), ...ids].map(x => x.replace(/^(UGC|PGC|ESO|MCG|LBN|LDN) 0+(\d)/, '$1 $2')); if (cw) all.push('Caldwell C' + cw); if (h4) all.push('Herschel 400');
+  return [...new Set(all)].join(' · ');
+}
+function dsoInfoHtml(i, ms, upTag) {
+  const code = DSO.codes[DSO.T[i]], T = DSO_T[code], aa = neuToAltAz(dsoNEU(i)), vis = dsoVisText(i), con = DSO.cons[DSO.CON[i]];
+  const r = riseTransitSet('star', DSO.RA[i] / 15, DSO.DE[i], ms), N = mesNight(), b = nightBest(dsoV3(i), 'd' + i);
+  const nm = DSO.nm[i].split('|'), en = nm.slice(1).filter(Boolean), m = DSO.MAG[i], dist = dsoDist(i), hub = DSO.hub[i];
+  return `<h3><span class="xo-ico" style="color:rgb(${T[1]})">${T[2]}</span> ${dsoTitle(i)}</h3><div class="sub">${T[0]} · ${consFr(con) || con} · ${dsoCatText(i)}</div>${upTag(aa.alt)}<span class="tag ${vis[0]}">${vis[1]}</span>
+  <dl class="kv" style="margin-top:10px"><dt>Type</dt><dd>${T[0]}${hub && code[0] === 'g' ? ` (Hubble ${hub})` : ''}</dd>
+  <dt>Magnitude</dt><dd>${m < 99 ? (DSO.MB[i] ? `≈ ${num(m, 1)} <span class="muted">(estimée d'après la magnitude bleue)</span>` : num(m, 1)) : 'inconnue'}</dd>
+  <dt>Taille apparente</dt><dd>${fmtArcmin(DSO.A[i], DSO.B[i])}${DSO.PA[i] >= 0 && DSO.B[i] ? ` · orientation ${DSO.PA[i]}°` : ''}</dd>
+  <dt>Constellation</dt><dd>${consFr(con) || con}</dd>${dist ? `<dt>Distance</dt><dd>${dist}</dd>` : ''}
+  <dt>Désignations</dt><dd>${desigHtml(dsoIds(i), DSO.CW[i], DSO.F[i] & 8)}</dd>${en.length ? `<dt>Nom anglais</dt><dd>${en.join(', ')}</dd>` : ''}
+  <dt>Instrument</dt><dd>${vis[1]}</dd><dt>Meilleur moment ce soir</dt><dd>${bestTextFor(b, N, ms)}</dd>
+  <dt>Asc. droite (J2000)</dt><dd>${fmtRA(DSO.RA[i] / 15)}</dd><dt>Déclinaison</dt><dd>${fmtDec(DSO.DE[i])}</dd><dt>Altitude</dt><dd>${fmtDeg(aa.alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(aa.az)} ${cardinal(aa.az)}</dd>${riseRows(r, ms)}
+  <dt>Source</dt><dd>OpenNGC (CC BY-SA 4.0)</dd></dl>
+  <p class="fine">Nuit utilisée : ${N.a ? `${N.lvl}, ${hm(N.a)} → ${hm(N.b)}` : 'aucune'}. Instrument indicatif d'après la magnitude ; les galaxies et nébuleuses étendues paraissent plus pâles que leur magnitude.</p>`;
+}
+function dsoLaserHtml(i, ms) {
+  const code = DSO.codes[DSO.T[i]], T = DSO_T[code], aa = neuToAltAz(dsoNEU(i)), vis = dsoVisText(i), r = riseTransitSet('star', DSO.RA[i] / 15, DSO.DE[i], ms), con = DSO.cons[DSO.CON[i]];
+  const rs = r.circumpolar ? 'circumpolaire' : r.never ? 'ne se lève pas' : `↑ ${hmRel(r.rise, ms)} · ↓ ${hmRel(r.set, ms)}`;
+  return `<div class="lz-name"><span class="lz-dot on"></span><span class="xo-ico" style="color:rgb(${T[1]})">${T[2]}</span> ${dsoTitle(i)}<small>${T[0]}</small></div>
+    <div class="lz-row"><span>${consFr(con) || con}</span>${DSO.MAG[i] < 99 ? `<span>mag ${num(DSO.MAG[i], 1)}</span>` : ''}<span>${fmtArcmin(DSO.A[i], DSO.B[i])}</span><span>${dsoCatText(i)}</span></div>
+    <div class="lz-row"><span class="lz-vis ${vis[0]}">${vis[1]}</span></div>
+    <div class="lz-row"><span>Alt ${fmtDeg(aa.alt, 1)} · Az ${fmtDeg(aa.az, 0)} ${cardinal(aa.az)}</span><span>${rs}</span></div>
+    <div class="lz-hint">Touchez pour la fiche complète</div>`;
+}
+function dsoLaserCandidates(R, groundOn, cb) { // objets du ciel profond près du centre de la vue
+  if (DSO.state !== 'ok' || !dsoOn()) return;
+  const ve = viewEqj(), mask = dsoMask(), user = S.dsoMag >= 16 ? 99 : S.dsoMag, lim = Math.min(user, dsoZoomLim()), stamp = ++DSO.stamp;
+  const f = i => { if (DSO.seen[i] === stamp) return; DSO.seen[i] = stamp; if (!(DSO.F[i] & mask)) return; dsoNEU(i, dsoTmp); if (groundOn && dsoTmp[2] < 0) return; cb(i, sepDeg(dsoTmp)); };
+  dsoQuery(ve.ra, ve.dec, R * 1.3, lim, f);
+  if (mask & 12) for (const i of DSO.special) if (DSO.MAGE[i] <= user) f(i);
+}
+const dsoUserLim = () => S.dsoMag >= 16 ? 99 : S.dsoMag;
+const dsoMesOn = i => DSO.state === 'ok' && (DSO.mesF[i] & dsoMask()) !== 0 && MES[i].mag <= dsoUserLim();
+const dsoXoOn = i => DSO.state === 'ok' && (DSO.xoF[i] & dsoMask()) !== 0;
+function dsoDesigRow(ids, cw, h4, skip) {
+  if (DSO.state !== 'ok' || (!ids && !cw && !h4)) return '';
+  const h = desigHtml((ids || []).filter(x => x !== skip), cw, h4); return h ? `<dt>Autres désignations</dt><dd>${h}</dd>` : '';
+}
+const mesDesigRow = i => dsoDesigRow(DSO.mesIds[i], DSO.mesCw[i], DSO.mesF[i] & 8, MES[i].ngc);
+const xoDesigRow = i => dsoDesigRow(DSO.xoIds[i], DSO.xoCw[i], DSO.xoF[i] & 8);
+const DSO_Q = /^(ngc|ic|ugc|pgc|c|caldwell|sh2|lbn|ldn|mel|cr|b|vdb|abell|arp|hcg|eso|h400|herschel)(\s|-)*\d|^(caldwell|herschel|ngc|ic\b)/;
+function dsoNormQuery(q) { return q.replace(/^(sh2|[a-z]+)([\s-]*)0+(\d)/, '$1$2$3').replace(/^caldwell\s*(\d)/, 'c $1'); }
+/* ---------------- Calendrier du ciel : 12 mois calculés sur l'appareil (astronomy-engine) + essaims d'étoiles filantes (IMO) ---------------- */
+// Essaims principaux (IMO, Meteor Shower Calendar) : pic en longitude solaire J2000, ZHR, radiant J2000, vitesse, période d'activité
+const SHOWERS = [
+  { id: 'QUA', fr: 'Quadrantides', ls: 283.15, zhr: '80 (60–200)', ra: 230, de: 49, v: 41, act: 'du 28 déc. au 12 janv.' },
+  { id: 'LYR', fr: 'Lyrides', ls: 32.32, zhr: '18 (jusqu\'à 90)', ra: 271, de: 34, v: 49, act: 'du 14 au 30 avril' },
+  { id: 'ETA', fr: 'Êta Aquarides', ls: 45.5, zhr: '50 (40–85)', ra: 338, de: -1, v: 66, act: 'du 19 avril au 28 mai' },
+  { id: 'SDA', fr: 'Delta Aquarides du Sud', ls: 127, zhr: '25', ra: 340, de: -16, v: 41, act: 'du 12 juil. au 23 août' },
+  { id: 'CAP', fr: 'Alpha Capricornides', ls: 127, zhr: '5 (bolides)', ra: 307, de: -10, v: 23, act: 'du 3 juil. au 15 août' },
+  { id: 'PER', fr: 'Perséides', ls: 140.0, zhr: '100', ra: 48, de: 58, v: 59, act: 'du 17 juil. au 24 août' },
+  { id: 'DRA', fr: 'Draconides', ls: 195.4, zhr: 'variable (≈ 10)', ra: 262, de: 54, v: 20, act: 'du 6 au 10 oct.' },
+  { id: 'STA', fr: 'Taurides du Sud', ls: 197, zhr: '5 (bolides)', ra: 32, de: 9, v: 27, act: 'du 10 sept. au 20 nov.' },
+  { id: 'ORI', fr: 'Orionides', ls: 208, zhr: '20', ra: 95, de: 16, v: 66, act: 'du 2 oct. au 7 nov.' },
+  { id: 'NTA', fr: 'Taurides du Nord', ls: 230, zhr: '5 (bolides)', ra: 58, de: 22, v: 29, act: 'du 20 oct. au 10 déc.' },
+  { id: 'LEO', fr: 'Léonides', ls: 235.27, zhr: '10–15', ra: 152, de: 22, v: 71, act: 'du 6 au 30 nov.' },
+  { id: 'GEM', fr: 'Géminides', ls: 262.2, zhr: '150', ra: 112, de: 33, v: 35, act: 'du 4 au 20 déc.' },
+  { id: 'URS', fr: 'Ursides', ls: 270.7, zhr: '10 (parfois 50)', ra: 217, de: 76, v: 33, act: 'du 17 au 26 déc.' }
+];
+const KAL_TYPES = [['all', 'Tout'], ['lune', 'Lune'], ['eclipse', 'Éclipses'], ['planete', 'Planètes'], ['rappro', 'Rapprochements'], ['meteor', 'Étoiles filantes'], ['saison', 'Saisons']];
+const KAL_ICON = { lune: '🌙', eclipse: '🌘', planete: '🪐', rappro: '✨', meteor: '☄️', saison: '🌍' };
+const KAL = { f: 'all', ev: null, key: '', job: null, prog: 0 };
+const PL_FR = { Mercury: 'Mercure', Venus: 'Vénus', Mars: 'Mars', Jupiter: 'Jupiter', Saturn: 'Saturne', Uranus: 'Uranus', Neptune: 'Neptune', Moon: 'la Lune', Sun: 'le Soleil' };
+const KAL_STARS = [{ fr: 'Aldébaran', ra: 68.98, de: 16.51 }, { fr: 'Régulus', ra: 152.09, de: 11.97 }, { fr: 'Spica', ra: 201.30, de: -11.16 }, { fr: 'Antarès', ra: 247.35, de: -26.43 }, { fr: 'les Pléiades', ra: 56.75, de: 24.12, mes: 45 }];
+const deFr = n => n.startsWith('les ') ? 'des ' + n.slice(4) : /^[AEIOUÉÈÂÊYH]/i.test(n) && !/^H[aeé]/.test(n) ? 'd\'' + n : 'de ' + n;
+const unitV = v => { const n = Math.hypot(v.x, v.y, v.z); return [v.x / n, v.y / n, v.z / n]; };
+const angV = (a, b) => Math.acos(clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1, 1)) * RAD;
+const bodyIdx = key => BODIES.findIndex(b => b.key === key);
+function kalKey(ms) { return dayKey(ms) + '|' + S.loc.lat.toFixed(2) + '|' + S.loc.lon.toFixed(2) + '|v1'; }
+function kalAltOf(key, t) { const eq = A.Equator(key, t, observer, true, true); return A.Horizon(t, observer, eq.ra, eq.dec, 'normal').altitude; }
+function kalBuild(startMs, done) {
+  const t0 = A.MakeTime(new Date(startMs)), endMs = startMs + 365 * 86400000, inWin = ms => ms >= startMs && ms < endMs;
+  const ev = [], add = e => { if (inWin(e.t)) ev.push(e); };
+  const tasks = [];
+  // phases de la Lune
+  tasks.push(() => {
+    let q = A.SearchMoonQuarter(t0);
+    while (msOf(q.time) < endMs) {
+      const ms = msOf(q.time), names = ['Nouvelle Lune', 'Premier quartier', 'Pleine Lune', 'Dernier quartier'];
+      let sub = q.quarter === 0 ? 'Nuits sans Lune : idéal pour le ciel profond et les étoiles filantes' : q.quarter === 2 ? 'Lune visible toute la nuit' : q.quarter === 1 ? 'Lune le soir : relief bien visible au terminateur' : 'Lune en seconde partie de nuit';
+      let title = names[q.quarter];
+      if (q.quarter === 2 || q.quarter === 0) { const d = A.GeoMoon(q.time), km = Math.hypot(d.x, d.y, d.z) * AU_KM; if (q.quarter === 2 && km < 360000) { title = 'Pleine Lune (« super Lune »)'; sub = `Lune proche de la Terre (${Math.round(km).toLocaleString('fr-FR')} km) : un peu plus grande et lumineuse`; } }
+      add({ type: 'lune', t: ms, q: q.quarter, ico: ['🌑', '🌓', '🌕', '🌗'][q.quarter], title, sub, target: { body: 'Moon' } });
+      q = A.NextMoonQuarter(q);
+    }
+  });
+  // éclipses de Lune (visibilité locale)
+  tasks.push(() => {
+    let e = A.SearchLunarEclipse(t0);
+    while (msOf(e.peak) < endMs) {
+      const ms = msOf(e.peak), kind = { penumbral: 'par la pénombre', partial: 'partielle', total: 'totale' }[e.kind];
+      const alt = kalAltOf('Moon', e.peak), sd = e.sd_penum;
+      const a1 = kalAltOf('Moon', e.peak.AddDays(-sd / 1440)), a2 = kalAltOf('Moon', e.peak.AddDays(sd / 1440));
+      const vis = alt > 0 ? 'ok' : (a1 > 0 || a2 > 0) ? 'part' : 'no';
+      const dur = e.kind === 'total' ? `totalité ${Math.round(2 * e.sd_total)} min` : e.kind === 'partial' ? `phase partielle ${Math.round(2 * e.sd_partial)} min` : `pénombre ${Math.round(2 * sd)} min`;
+      add({ type: 'eclipse', t: ms, title: `Éclipse de Lune ${kind}`, sub: `Maximum ${hm(ms)} · ${dur} · ${vis === 'ok' ? `visible depuis ${S.loc.name} (Lune à ${Math.round(alt)}°)` : vis === 'part' ? `en partie visible depuis ${S.loc.name} (Lune levée seulement une partie du temps)` : `non visible depuis ${S.loc.name} (Lune sous l'horizon)`}${e.kind === 'penumbral' ? ' · assombrissement léger, difficile à voir' : ''}`, vis, target: { body: 'Moon' }, view: ms, eclipse: 'lune' });
+      e = A.NextLunarEclipse(e.peak);
+    }
+  });
+  // éclipses de Soleil : globales puis visibilité locale
+  tasks.push(() => {
+    let g = A.SearchGlobalSolarEclipse(t0);
+    while (msOf(g.peak) < endMs) {
+      const ms = msOf(g.peak), kind = { total: 'totale', annular: 'annulaire', partial: 'partielle', hybrid: 'hybride' }[g.kind];
+      let loc = null; try { loc = A.SearchLocalSolarEclipse(g.peak.AddDays(-1.5), observer); } catch (er) {}
+      const ok = loc && Math.abs(msOf(loc.peak.time) - ms) < 86400000 && loc.peak.altitude > 0;
+      const where = g.latitude != null ? ` · centre de l'ombre : ${Math.abs(Math.round(g.latitude))}° ${g.latitude >= 0 ? 'N' : 'S'}, ${Math.abs(Math.round(g.longitude))}° ${g.longitude >= 0 ? 'E' : 'O'}` : '';
+      const sub = ok ? `Vue depuis ${S.loc.name} : éclipse ${loc.kind === 'partial' ? 'partielle' : kind}, Soleil caché à ${Math.round(loc.obscuration * 100)} % à ${hm(msOf(loc.peak.time))} (Soleil à ${Math.round(loc.peak.altitude)}°)${where} · ⚠️ lunettes d'éclipse certifiées obligatoires`
+        : `Non visible depuis ${S.loc.name}${where}`;
+      add({ type: 'eclipse', t: ms, title: `Éclipse de Soleil ${kind}`, sub, vis: ok ? 'ok' : 'no', target: { body: 'Sun' }, view: ok ? msOf(loc.peak.time) : ms, eclipse: 'soleil' });
+      g = A.NextGlobalSolarEclipse(g.peak);
+    }
+  });
+  // saisons
+  tasks.push(() => {
+    const y0 = new Date(startMs).getUTCFullYear(), south = S.loc.lat < 0;
+    for (let y = y0; y <= y0 + 1; y++) {
+      const s = A.Seasons(y);
+      const L = [[s.mar_equinox, 'Équinoxe de mars', south ? 'début de l\'automne (hémisphère sud)' : 'début du printemps'], [s.jun_solstice, 'Solstice de juin', south ? 'nuit la plus longue de l\'année' : 'jour le plus long de l\'année'],
+        [s.sep_equinox, 'Équinoxe de septembre', south ? 'début du printemps (hémisphère sud)' : 'début de l\'automne'], [s.dec_solstice, 'Solstice de décembre', south ? 'jour le plus long de l\'année' : 'nuit la plus longue de l\'année']];
+      for (const [t, title, sub] of L) add({ type: 'saison', t: msOf(t), title, sub: sub + ' · jour et nuit ' + (title.startsWith('Équi') ? 'presque égaux' : 'extrêmes'), target: { body: 'Sun' }, view: msOf(t) });
+    }
+  });
+  // oppositions, élongations, éclat maximal de Vénus
+  tasks.push(() => {
+    for (const p of ['Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']) {
+      let t = t0;
+      for (let k = 0; k < 3; k++) {
+        let r; try { r = A.SearchRelativeLongitude(p, 0, t); } catch (er) { break; }
+        const ms = msOf(r); if (ms >= endMs) break;
+        let mag = null; try { mag = A.Illumination(p, r).mag; } catch (er) {}
+        const dist = A.GeoVector(p, r, true), au = Math.hypot(dist.x, dist.y, dist.z);
+        add({ type: 'planete', t: ms, title: `Opposition ${deFr(PL_FR[p])}`, sub: `Visible toute la nuit, au plus près et au plus brillant${mag != null ? ` (mag ${num(mag, 1)})` : ''} · distance ${num(au, 2)} UA`, target: { body: p } });
+        t = r.AddDays(30);
+      }
+    }
+    for (const p of ['Mercury', 'Venus']) {
+      let t = t0;
+      for (let k = 0; k < 8; k++) {
+        let e; try { e = A.SearchMaxElongation(p, t); } catch (er) { break; }
+        const ms = msOf(e.time); if (ms >= endMs) break;
+        add({ type: 'planete', t: ms, title: `${PL_FR[p]} à sa plus grande élongation ${e.visibility === 'morning' ? 'du matin' : 'du soir'}`, sub: `${Math.round(e.elongation)}° du Soleil · à chercher ${e.visibility === 'morning' ? 'à l\'est avant l\'aube' : 'à l\'ouest après le coucher du Soleil'}`, target: { body: p }, side: e.visibility });
+        t = e.time.AddDays(20);
+      }
+    }
+    let t = t0;
+    for (let k = 0; k < 3; k++) {
+      let e; try { e = A.SearchPeakMagnitude('Venus', t); } catch (er) { break; }
+      const ms = msOf(e.time); if (ms >= endMs) break;
+      add({ type: 'planete', t: ms, title: 'Vénus à son éclat maximal', sub: `Magnitude ${num(e.mag, 1)} : l'astre le plus brillant après le Soleil et la Lune`, target: { body: 'Venus' } });
+      t = e.time.AddDays(60);
+    }
+  });
+  // rapprochements : Lune–planètes / étoiles brillantes, planètes entre elles (positions géocentriques)
+  const PL = ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'], days = 367, pv = {}, sunV = [];
+  tasks.push(() => {
+    for (const p of PL) pv[p] = [];
+    for (let d = 0; d <= days; d++) { const t = t0.AddDays(d); for (const p of PL) pv[p].push(unitV(A.GeoVector(p, t, true))); sunV.push(unitV(A.GeoVector('Sun', t, true))); }
+  });
+  const interp = (arr, x) => { const i = Math.min(arr.length - 2, Math.floor(x)), f = x - i, a = arr[i], b = arr[i + 1]; const v = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], n = Math.hypot(...v); return [v[0] / n, v[1] / n, v[2] / n]; };
+  const STARV = KAL_STARS.map(s => vecFromRaDec(s.ra, s.de));
+  const moonV = [], STEP = 0.125; // Lune toutes les 3 h
+  for (let m = 0; m < 12; m++) tasks.push(() => { const a = Math.round(m * 30.5 / STEP), b = Math.round(Math.min(days, (m + 1) * 30.5 + 1) / STEP); for (let k = moonV.length; k <= b; k++) moonV.push(unitV(A.GeoMoon(t0.AddDays(k * STEP)))); });
+  tasks.push(() => {
+    const exactSep = (d, tgt) => { const t = t0.AddDays(d), mv = unitV(A.GeoMoon(t)); return angV(mv, tgt.star ? tgt.v : unitV(A.GeoVector(tgt.p, t, true))); };
+    const targets = [...PL.map(p => ({ p, lim: 3, name: PL_FR[p] })), ...KAL_STARS.map((s, k) => ({ star: 1, v: STARV[k], lim: s.mes ? 2.5 : 1.5, name: s.fr, s }))];
+    for (const tg of targets) {
+      let prev = 999, prev2 = 999;
+      for (let k = 0; k < moonV.length; k++) {
+        const x = k * STEP, sep = angV(moonV[k], tg.star ? tg.v : interp(pv[tg.p], x));
+        if (prev < prev2 && prev <= sep && prev < tg.lim + 1) { // minimum local entre k-2 et k : affinage (15 min)
+          let bestD = (k - 1) * STEP, best = prev;
+          for (let d = (k - 2) * STEP; d <= k * STEP; d += 1 / 96) { const s = exactSep(d, tg); if (s < best) { best = s; bestD = d; } }
+          const el = angV(interp(sunV, bestD), moonV[Math.round(bestD / STEP)]);
+          if (best < tg.lim && el > 20) {
+            const ms = startMs + bestD * 86400000;
+            add({ type: 'rappro', t: ms, title: `La Lune près ${deFr(tg.name)}`, sub: `${num(best, 1)}° d'écart (vu du centre de la Terre)${best < 1 ? ' · occultation possible depuis certaines régions' : ''}`, target: { body: 'Moon' }, sepTgt: tg.p ? { body: tg.p } : { mes: tg.s.mes, ra: tg.s.ra, de: tg.s.de } });
+          }
+        }
+        prev2 = prev; prev = sep;
+      }
+    }
+    for (let a = 0; a < PL.length; a++) for (let b = a + 1; b < PL.length; b++) {
+      const A1 = pv[PL[a]], B1 = pv[PL[b]];
+      for (let d = 1; d < days; d++) {
+        const s0 = angV(A1[d - 1], B1[d - 1]), s1 = angV(A1[d], B1[d]), s2 = angV(A1[d + 1], B1[d + 1]);
+        if (s1 <= s0 && s1 < s2 && s1 < 3) {
+          let best = s1, bestD = d; for (let x = d - 1; x <= d + 1; x += 1 / 24) { const s = angV(interp(A1, x), interp(B1, x)); if (s < best) { best = s; bestD = x; } }
+          const el = Math.min(angV(interp(sunV, bestD), interp(A1, bestD)), angV(interp(sunV, bestD), interp(B1, bestD)));
+          if (best < 2.5 && el > 15) add({ type: 'rappro', t: startMs + bestD * 86400000, title: `Rapprochement ${PL_FR[PL[a]]} – ${PL_FR[PL[b]]}`, sub: `${num(best, 1)}° d'écart · à ${Math.round(el)}° du Soleil`, target: { body: PL[a] }, sepTgt: { body: PL[b] } });
+        }
+      }
+    }
+  });
+  // essaims d'étoiles filantes : pic = longitude solaire (J2000 → équinoxe de la date)
+  tasks.push(() => {
+    const y0 = new Date(startMs).getUTCFullYear();
+    for (const sh of SHOWERS) for (let y = y0 - 1; y <= y0 + 1; y++) {
+      const lsDate = norm360(sh.ls + 0.0139697 * (y - 2000)); let t;
+      try { t = A.SearchSunLongitude(lsDate, A.MakeTime(new Date(Date.UTC(y, 0, 1))), 366); } catch (er) { continue; }
+      if (!t) continue; const ms = msOf(t); if (!inWin(ms)) continue;
+      const moon = A.Illumination('Moon', t).phase_fraction;
+      add({ type: 'meteor', t: ms, title: `${sh.fr} (pic)`, sub: `Taux en ciel idéal (ZHR) : ${sh.zhr} météores/h · actif ${sh.act} · radiant ${fmtRA(sh.ra / 15).replace(/ \d+s$/, '')} ${fmtDec(sh.de)} · ${sh.v} km/s · Lune éclairée à ${Math.round(moon * 100)} %${moon > 0.6 ? ' (gênante)' : moon < 0.25 ? ' (ciel favorable)' : ''}`, target: { radiant: sh }, moon });
+    }
+  });
+  // pas de doublon : une éclipse remplace la phase du même jour ; même type + même titre + même jour = un seul
+  tasks.push(() => {
+    const ecl = ev.filter(e => e.type === 'eclipse');
+    for (let k = ev.length - 1; k >= 0; k--) { const e = ev[k]; if (e.type === 'lune' && (e.q === 0 || e.q === 2) && ecl.some(x => Math.abs(x.t - e.t) < 1.2 * 86400000 && (x.eclipse === 'lune') === (e.q === 2))) ev.splice(k, 1); }
+    const seen = new Set();
+    for (let k = 0; k < ev.length; k++) { const e = ev[k], id = e.type + '|' + e.title + '|' + dayKey(e.t); if (seen.has(id)) { ev.splice(k--, 1); continue; } seen.add(id); e.id = id; }
+    ev.sort((a, b) => a.t - b.t);
+  });
+  const job = { i: 0, n: tasks.length, cancel: false };
+  const step = () => {
+    if (job.cancel) return; const ts = performance.now();
+    while (job.i < tasks.length && performance.now() - ts < 30) { try { tasks[job.i](); } catch (er) { console.warn('calendrier', er); } job.i++; }
+    KAL.prog = job.i / job.n;
+    if (job.i < tasks.length) { renderKal(); setTimeout(step, 0); } else done(ev);
+  };
+  setTimeout(step, 0); return job;
+}
+function kalEnsure() {
+  const start = localMidnight(Date.now()), key = kalKey(start); // toujours « à partir d'aujourd'hui » (même si l'heure simulée a été déplacée)
+  if (KAL.key === key && (KAL.ev || KAL.job)) return;
+  if (KAL.job) KAL.job.cancel = true;
+  KAL.key = key; KAL.ev = null; KAL.start = start; KAL.prog = 0;
+  KAL.job = kalBuild(start, ev => { KAL.ev = ev; KAL.job = null; renderKal(); });
+  renderKal();
+}
+function renderKal() {
+  const el = $('kalList'); if (!el || $('panel-calendar').classList.contains('hidden')) return;
+  const head = `<div class="muted kal-period">${S.loc.name} · du ${fmt('date').format(new Date(KAL.start))} et pendant 12 mois</div>`;
+  const chips = `<div class="mes-chips kal-chips">${KAL_TYPES.map(([k, l]) => `<button class="mchip${KAL.f === k ? ' on' : ''}" data-cf="${k}" type="button">${k === 'all' ? '' : KAL_ICON[k] + ' '}${l}${KAL.ev ? ` <small>${k === 'all' ? KAL.ev.length : KAL.ev.filter(e => e.type === k).length}</small>` : ''}</button>`).join('')}</div>`;
+  const iss = `<a class="kal-iss" href="https://www.heavens-above.com/PassSummary.aspx?satid=25544&lat=${S.loc.lat.toFixed(4)}&lng=${S.loc.lon.toFixed(4)}&loc=${encodeURIComponent(S.loc.name)}&alt=0&tz=UCT" target="_blank" rel="noopener">🛰️ Passages de l'ISS près de chez vous <small>Heavens-Above, lien externe ↗</small></a>${SAT.adv ? '<button class="btn mini" id="kalIssApp" type="button">Passages dans l\'app (24 h)</button>' : ''}`;
+  if (!KAL.ev) { el.innerHTML = head + chips + `<p class="muted">Calcul des événements sur l'appareil… ${Math.round(KAL.prog * 100)} %</p>`; bindKal(el); return; }
+  const list = KAL.ev.filter(e => KAL.f === 'all' || e.type === KAL.f);
+  let html = '', month = '';
+  for (const e of list) {
+    const mo = fmt('my').format(new Date(e.t)); if (mo !== month) { month = mo; html += `<li class="kal-month">${mo}</li>`; }
+    html += `<li class="kal-ev kal-${e.type}${e.vis === 'no' ? ' kal-no' : ''}" data-ev="${KAL.ev.indexOf(e)}"><span class="kal-ico">${e.ico || (e.eclipse === 'soleil' ? '🌞' : KAL_ICON[e.type])}</span><div><div class="pname">${e.title}</div><div class="pmeta">${e.sub}</div></div><div class="pright"><b>${fmt('dmed').format(new Date(e.t))}</b><br><span class="muted">${hm(e.t)}</span></div></li>`;
+  }
+  el.innerHTML = head + chips + (KAL.f === 'all' ? iss : '') + `<ul class="plist kal-list">${html || '<li class="muted">Aucun événement de ce type sur 12 mois.</li>'}</ul>
+  <p class="fine">Calculs locaux (astronomy-engine, précision de l'ordre de la minute). Heures pour ${S.loc.name}. Rapprochements : écart vu du centre de la Terre (Lune ≤ 3° d'une planète, ≤ 1,5° d'une étoile brillante ; planètes ≤ 2,5°). Étoiles filantes : liste IMO, pic calculé d'après la longitude solaire, ZHR = taux en ciel idéal avec radiant au zénith (on en voit moins). Touchez un événement pour régler l'heure et viser.</p>`;
+  bindKal(el);
+}
+function bindKal(el) {
+  el.querySelectorAll('[data-cf]').forEach(b => b.onclick = () => { KAL.f = b.dataset.cf; renderKal(); });
+  el.querySelectorAll('li[data-ev]').forEach(li => li.onclick = () => kalGo(KAL.ev[+li.dataset.ev]));
+  const ia = el.querySelector('#kalIssApp'); if (ia) ia.onclick = () => { SAT.opts.iss = true; saveSatOpts(); satEnsureData(); openPanel('sats', true); startPassJob(); };
+}
+/* meilleur moment pour regarder près de l'instant t : ciel noir et objet le plus haut possible (±12 h) */
+function kalAlt(target, t) {
+  if (target.body) return kalAltOf(target.body, t);
+  const v = target.radiant ? vecFromRaDec(target.radiant.ra, target.radiant.de) : vecFromRaDec(target.ra, target.de);
+  const r = A.Rotation_EQJ_HOR(t, observer).rot, hz = r[0][2] * v[0] + r[1][2] * v[1] + r[2][2] * v[2];
+  return Math.asin(clamp(hz, -1, 1)) * RAD;
+}
+function kalBestTime(e) {
+  if (e.view != null) return e.view;
+  const span = e.type === 'meteor' ? 14 : 12;
+  let best = null, bestSc = -1e9;
+  for (const [sunLim, altMin] of [[-12, 8], [-6, 5], [-2, 3]]) {
+    for (let h = -span; h <= span; h += 1 / 3) {
+      const t = A.MakeTime(new Date(e.t + h * 3600000)); if (kalAltOf('Sun', t) > sunLim) continue;
+      const a = kalAlt(e.target, t); if (a < altMin) continue;
+      const sc = (e.type === 'meteor' ? Math.min(a, 60) : Math.min(a, 35)) - Math.abs(h) * 0.6;
+      if (sc > bestSc) { bestSc = sc; best = e.t + h * 3600000; }
+    }
+    if (best != null) break;
+  }
+  return best != null ? Math.round(best / 60000) * 60000 : e.t;
+}
+function setTimeAbs(ms) { S.live = false; S.playing = false; S.anchor = ms; S.slider = 0; slider.value = 0; syncTimeUI(); S.dirty = true; updateSky(true); }
+function kalGo(e) {
+  const t = kalBestTime(e);
+  closeAll(); setTimeAbs(t);
+  if (e.target.radiant) {
+    const sh = e.target.radiant; S.mark = { v: vecFromRaDec(sh.ra, sh.de), label: 'Radiant des ' + sh.fr };
+    const n = eqjToNEU(S.mark.v[0], S.mark.v[1], S.mark.v[2], [0, 0, 0]), aa = neuToAltAz(n);
+    S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(aa.az, S.az * RAD) * DEG, alt1: clamp(Math.max(aa.alt, 10), -89, 89) * DEG, fov1: 100 * DEG };
+    toast(`${sh.fr} : ${fmt('dmed').format(new Date(t))} ${hm(t)} · radiant à ${Math.round(aa.alt)}° ${cardinal(aa.az)}${aa.alt < 0 ? ' (sous l\'horizon : attendez qu\'il se lève)' : ''}`, 6000);
+    return;
+  }
+  S.mark = null;
+  const bi = bodyIdx(e.target.body); if (bi < 0) return;
+  if (e.sepTgt) { // rapprochement : champ assez large pour voir les deux astres
+    goToObject({ kind: 'body', bi });
+    if (S.tween) S.tween.fov1 = Math.min(S.tween.fov1, 25 * DEG);
+  } else goToObject({ kind: 'body', bi });
+  if (e.target.body === 'Sun') toast('⚠️ Ne regardez jamais le Soleil sans protection certifiée', 5000);
+}
+function drawMark(groundOn) { // radiant d'étoiles filantes
+  const m = S.mark; if (!m) return;
+  const n = eqjToNEU(m.v[0], m.v[1], m.v[2], [0, 0, 0]); if (!proj(n[0], n[1], n[2]) || !onScreen(40)) return;
+  const x = P.x, y = P.y; ctx.save(); ctx.strokeStyle = 'rgba(255,214,120,.9)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 + 0.3; ctx.moveTo(x + Math.cos(a) * 12, y + Math.sin(a) * 12); ctx.lineTo(x + Math.cos(a) * 34, y + Math.sin(a) * 34); } ctx.stroke();
+  ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.arc(x, y, 9, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(255,224,150,.95)'; ctx.font = '600 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(m.label + (n[2] < 0 ? ' (sous l\'horizon)' : ''), x, y + 48);
+  ctx.restore();
+}
+$('dsoMag').value = S.dsoMag; const dsoMagTxt = () => { $('dsoMagVal').textContent = S.dsoMag >= 16 ? 'toutes' : num(S.dsoMag, 1); };
+dsoMagTxt(); dsoStatus();
+$('dsoMag').oninput = e => { S.dsoMag = +e.target.value; dsoMagTxt(); LASER.vk = ''; S.dirty = true; save(); };
+if (dsoOn()) setTimeout(dsoEnsure, 600); // couches activées lors d'une visite précédente
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
 const laserActive = () => !!S.opts.laser && !S.telmode;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
-const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' || a.kind === 'mes' ? a.i === b.i : a.c === b.c);
+const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' || a.kind === 'mes' || a.kind === 'dso' ? a.i === b.i : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
 function laserScore(sel, R) {
   if (sel.kind === 'xo') { const sep = sepDeg(xoNEU(sel.i)); return { sep, score: sep / R - 0.3 }; }
+  if (sel.kind === 'dso') { const sep = Math.max(0, sepDeg(dsoNEU(sel.i)) - Math.min(DSO.A[sel.i] / 120, R * 0.5)); return { sep, score: sep / R - 0.2 + Math.min(DSO.MAGE[sel.i], 16) * 0.01 }; }
   if (sel.kind === 'mes') { const sep = Math.max(0, sepDeg(mesNEU(sel.i)) - Math.min(MES[sel.i].sz[0] / 120, R * 0.5)); return { sep, score: sep / R - 0.25 }; }
   if (sel.kind === 'sat') { const c = satCur(sel.id); if (!c) return { sep: 999, score: 99 }; const sep = sepDeg(c); return { sep, score: sep / R - (c[4] ? 0.35 : 0) }; }
   if (sel.kind === 'body') {
@@ -1491,7 +2045,7 @@ function centreConstellation() {
 function updateLaser(now) {
   if (now - LASER.last < (AR.on ? 125 : 160)) return; // ~6-8 Hz
   // vue et ciel inchangés : inutile de refaire la recherche (sauf rafraîchissement lent du panneau)
-  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '') + (S.opts.extreme ? 'x' : '') + (S.opts.messier ? 'm' : '');
+  const vk = V.fN.toFixed(4) + V.fE.toFixed(4) + V.fU.toFixed(4) + V.fovDeg.toFixed(1) + frameKey + (GUIDE.target ? 'g' : '') + (satOn() ? 's' + SAT.ver : '') + (S.opts.extreme ? 'x' : '') + (S.opts.messier ? 'm' : '') + (DSO.state === 'ok' && dsoOn() ? 'd' + dsoMask() + S.dsoMag : '');
   if (vk === LASER.vk && now - LASER.last < 1500) return;
   LASER.vk = vk; LASER.last = now;
   const prev = LASER.target;
@@ -1505,15 +2059,17 @@ function updateLaser(now) {
     const r = laserScore({ kind: 'body', bi }, R);
     if (r.sep < R * 1.2 && r.score < bestScore) { bestScore = r.score; best = { kind: 'body', bi }; }
   });
-  if (S.opts.extreme) { xoUpdate(); for (let i = 0; i < XO.length; i++) { // objets extrêmes (prioritaires sur les étoiles proches)
+  const dsoL = DSO.state === 'ok' && dsoOn();
+  if (S.opts.extreme || dsoL) { xoUpdate(); for (let i = 0; i < XO.length; i++) { if (!S.opts.extreme && !dsoXoOn(i)) continue; // objets extrêmes (prioritaires sur les étoiles proches)
     const v = XO[i].neu; if (groundOn && v[2] < 0) continue; const sep = sepDeg(v); if (sep > R * 1.2) continue;
     const sc = sep / R - 0.3; if (sc < bestScore) { bestScore = sc; best = { kind: 'xo', i }; }
   } }
-  if (S.opts.messier) { mesUpdate(); for (let i = 0; i < MES.length; i++) { // catalogue de Messier (M1 → fiche du Crabe, sans doublon)
-    const o = MES[i]; if (o.xo === 'm1' && S.opts.extreme) continue;
+  if (S.opts.messier || dsoL) { mesUpdate(); for (let i = 0; i < MES.length; i++) { if (!S.opts.messier && !dsoMesOn(i)) continue; // catalogue de Messier (M1 → fiche du Crabe, sans doublon)
+    const o = MES[i]; if (o.xo === 'm1' && (S.opts.extreme || (dsoL && dsoXoOn(o.xoI)))) continue;
     const v = o.neu; if (groundOn && v[2] < 0) continue; const sep = Math.max(0, sepDeg(v) - Math.min(o.sz[0] / 120, R * 0.5)); if (sep > R * 1.2) continue;
     const sc = sep / R - 0.25; if (sc < bestScore) { bestScore = sc; best = mesSel(i); }
   } }
+  dsoLaserCandidates(R, groundOn, (i, sep0) => { const sep = Math.max(0, sep0 - Math.min(DSO.A[i] / 120, R * 0.5)); if (sep > R * 1.2) return; const sc = sep / R - 0.2 + Math.min(DSO.MAGE[i], 16) * 0.01; if (sc < bestScore) { bestScore = sc; best = { kind: 'dso', i }; } });
   if (satOn()) for (const st of SAT.fine) { // satellites (éclairés en priorité sur les étoiles)
     if (!st.ok || (groundOn && st.cur[2] < 0)) continue;
     const c = st.cur, sep = sepDeg(c); if (sep > R * 1.2) continue;
@@ -1551,6 +2107,7 @@ function updateLaser(now) {
 function distText(sel) {
   if (sel.kind === 'xo') return XO[sel.i].d;
   if (sel.kind === 'mes') return MES[sel.i].d;
+  if (sel.kind === 'dso') return dsoDist(sel.i) || 'inconnue';
   if (sel.kind === 'sat') { const c = satCur(sel.id); return c ? `${Math.round(c[3]).toLocaleString('fr-FR')} km` : 'inconnue'; }
   if (sel.kind === 'star') {
     const ex = D.extra && D.extra[SHIP[sel.i]]; const pc = ex ? ex[0] : 0;
@@ -1588,6 +2145,7 @@ function renderLaserPanel(now) {
     <div class="lz-hint">Touchez pour la fiche complète</div>`;
     return;
   }
+  if (t.kind === 'dso') { el.innerHTML = dsoLaserHtml(t.i, ms); return; }
   if (t.kind === 'mes') {
     const o = MES[t.i], T = MES_T[o.t], aa = neuToAltAz(mesNEU(t.i)), r = riseTransitSet('star', o.ra / 15, o.de, ms), vis = mesVis(o.mag);
     const rs = r.circumpolar ? 'circumpolaire' : r.never ? 'ne se lève pas' : `↑ ${hmRel(r.rise, ms)} · ↓ ${hmRel(r.set, ms)}`;
@@ -1658,7 +2216,7 @@ function drawLaser() {
   // cible
   const tg = LASER.target; let tx = null, ty = null;
   if (tg) {
-    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : tg.kind === 'xo' ? xoNEU(tg.i) : tg.kind === 'mes' ? mesNEU(tg.i) : sky.bodies[tg.bi].neu;
+    const v = tg.kind === 'star' ? [SN[tg.i], SE[tg.i], SU[tg.i]] : tg.kind === 'sat' ? satNEU(tg.id) : tg.kind === 'xo' ? xoNEU(tg.i) : tg.kind === 'mes' ? mesNEU(tg.i) : tg.kind === 'dso' ? dsoNEU(tg.i) : sky.bodies[tg.bi].neu;
     if (proj(v[0], v[1], v[2])) {
       tx = P.x; ty = P.y;
       ctx.strokeStyle = 'rgba(110,255,160,.95)'; ctx.lineWidth = 1.6; ctx.shadowColor = '#3cff78'; ctx.shadowBlur = 8;
@@ -1684,17 +2242,18 @@ function selNEU(sel) {
   if (sel.kind === 'sat') return satNEU(sel.id);
   if (sel.kind === 'xo') return xoNEU(sel.i);
   if (sel.kind === 'mes') return mesNEU(sel.i);
+  if (sel.kind === 'dso') return dsoNEU(sel.i);
   return eqjToNEU(sel.c.v[0], sel.c.v[1], sel.c.v[2], [0, 0, 0]);
 }
 const nextRiseCache = new Map();
 function nextRiseMs(sel) {
   if (sel.kind === 'sat') { const s = SAT.byId.get(sel.id); const p = s && SATLIB ? satNextPass(s) : null; return p ? p.rise : null; }
   const ms = simMs();
-  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : sel.kind === 'xo' ? 'x' + sel.i : sel.kind === 'mes' ? 'm' + sel.i : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
+  const key = (sel.kind === 'star' ? 's' + sel.i : sel.kind === 'body' ? 'b' + sel.bi : sel.kind === 'xo' ? 'x' + sel.i : sel.kind === 'mes' ? 'm' + sel.i : sel.kind === 'dso' ? 'd' + sel.i : 'c' + sel.c.id) + '|' + Math.floor(ms / 60000) + '|' + S.loc.lat + S.loc.lon;
   if (nextRiseCache.has(key)) return nextRiseCache.get(key);
   let body;
   if (sel.kind === 'body') body = BODIES[sel.bi].key;
-  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.kind === 'xo' ? XO[sel.i].ra / 15 : sel.kind === 'mes' ? MES[sel.i].ra / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.kind === 'xo' ? XO[sel.i].de : sel.kind === 'mes' ? MES[sel.i].de : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
+  else { const ra = sel.kind === 'star' ? SRA[sel.i] / 15 : sel.kind === 'xo' ? XO[sel.i].ra / 15 : sel.kind === 'mes' ? MES[sel.i].ra / 15 : sel.kind === 'dso' ? DSO.RA[sel.i] / 15 : sel.c.ra / 15, dec = sel.kind === 'star' ? SDEC[sel.i] : sel.kind === 'xo' ? XO[sel.i].de : sel.kind === 'mes' ? MES[sel.i].de : sel.kind === 'dso' ? DSO.DE[sel.i] : sel.c.dec; A.DefineStar(A.Body.Star2, ra, dec, 1000); body = A.Body.Star2; }
   let r = null; try { r = msOf(A.SearchRiseSet(body, observer, +1, A.MakeTime(new Date(ms)), 2)); } catch (e) {}
   if (nextRiseCache.size > 200) nextRiseCache.clear();
   nextRiseCache.set(key, r); return r;
@@ -1708,7 +2267,7 @@ function goToObject(sel) {
   const { alt, az } = objAltAz(sel);
   if (AR.on) { setGuideTarget(sel); return; }
   const key = sel.kind === 'body' ? BODIES[sel.bi].key : '';
-  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : sel.kind === 'xo' ? 30 : sel.kind === 'mes' ? clamp(MES[sel.i].sz[0] / 60 * 5, 6, 40) : 40;
+  const fovT = sel.kind === 'con' ? 75 : (key === 'Sun' || key === 'Moon') ? 20 : sel.kind === 'body' ? 30 : sel.kind === 'sat' ? 50 : sel.kind === 'xo' ? 30 : sel.kind === 'mes' ? clamp(MES[sel.i].sz[0] / 60 * 5, 6, 40) : sel.kind === 'dso' ? clamp((DSO.A[sel.i] || 3) / 60 * 6, 3, 40) : 40;
   S.tween = { t0: performance.now(), dur: 900, az0: S.az, alt0: S.alt, fov0: S.fov, az1: S.az + angDiff(az, S.az * RAD) * DEG, alt1: clamp(alt, -89, 89) * DEG, fov1: fovT * DEG };
   select(sel);
   if (sel.kind !== 'con' && laserActive()) { LASER.pin = sel; LASER.target = sel; LASER.key = ''; LASER.vk = ''; }
@@ -2743,20 +3302,21 @@ function telTarget(s) {
   if (!s) return null; const name = objName(s);
   if (s.kind === 'sat') return { name, kind: 'sat' };
   if (s.kind === 'body') return { name, kind: 'body', key: BODIES[s.bi].key };
-  const [ra, dec] = s.kind === 'star' ? [SRA[s.i], SDEC[s.i]] : s.kind === 'mes' ? [MES[s.i].ra, MES[s.i].de] : s.kind === 'xo' ? [XO[s.i].ra, XO[s.i].de] : [s.c.ra, s.c.dec];
+  const [ra, dec] = s.kind === 'star' ? [SRA[s.i], SDEC[s.i]] : s.kind === 'mes' ? [MES[s.i].ra, MES[s.i].de] : s.kind === 'xo' ? [XO[s.i].ra, XO[s.i].de] : s.kind === 'dso' ? [DSO.RA[s.i], DSO.DE[s.i]] : [s.c.ra, s.c.dec];
   return { name, kind: s.kind, ra, dec };
 }
 /* Mode télescope : recherche et « Visibles maintenant » */
 function telItem(it, sel) { const a = sel.kind === 'con' ? null : objAltAz(sel).alt; return { name: objName(sel), sub: it, alt: a, sel }; }
 function telSearch(q) {
-  q = fold(q); if (!q) return []; updateSky(true); const hits = [];
+  q = dsoNormQuery(fold(q)); if (!q) return [];
+  if (DSO.state === 'idle' && DSO_Q.test(q)) dsoEnsure(); updateSky(true); const hits = [];
   for (const it of INDEX) {
-    if (it.sel.kind === 'sat') continue; let sc = 1e9;
+    if (it.sel.kind === 'sat' || it.sel.kind === 'nonex') continue; let sc = 1e9;
     for (const k of it.keys) { if (k === q) sc = Math.min(sc, 0); else if (k.startsWith(q)) sc = Math.min(sc, 1); else if (k.includes(' ' + q)) sc = Math.min(sc, 2); else if (q.length > 2 && k.includes(q)) sc = Math.min(sc, 3); }
     if (sc < 1e9) hits.push([sc * 10 + it.rank, it]);
   }
   hits.sort((a, b) => a[0] - b[0]);
-  return hits.slice(0, 8).map(h => telItem(h[1].sub.replace(/ · catalogue de Messier| · objet extrême/, ''), { ...h[1].sel }));
+  return hits.slice(0, 8).map(h => telItem(h[1].sub.replace(/ · catalogue de Messier| · objet extrême/, '').replace(/ · (NGC|IC|Caldwell|Herschel).*$/, ''), { ...h[1].sel }));
 }
 function telSuggest() {
   updateSky(true); const out = [];
@@ -2782,6 +3342,11 @@ window.__celeste = {
   laser: () => ({ target: LASER.target && objName(LASER.target), kind: LASER.target && LASER.target.kind, radius: laserRadiusDeg(), html: $('laserPanel').innerText }),
   aimAltAz(alt, az) { S.az = az * DEG; S.alt = alt * DEG; S.dirty = true; },
   perf: () => ({ renders: Q.renders, frames: Q.frames, level: Q.level, levelName: LEVELS[Q.level].name, dpr: DPR, ema: +Q.ema.toFixed(1), renderMs: +Q.cost.toFixed(2), auto: Q.auto, lowEnd, hwc: HWC, mem: DMEM, canvas: cv.width + 'x' + cv.height }),
+  dso: () => ({ state: DSO.state, n: DSO.n, drawn: DSO.drawn, cand: DSO.cand, mag: S.dsoMag, opts: DSO_OPTS.filter(k => S.opts[k]), err: DSO.err }), dsoEnsure: () => dsoEnsure(),
+  dsoFind: d => { const k = desigKeys(d)[0]; const it = INDEX.find(x => x.keys.includes(k)); return it ? { label: it.label, sub: it.sub, sel: it.sel } : null; },
+  dsoInfo: i => dsoInfoHtml(i, simMs(), () => ''), searchResults: () => results.map(r => ({ label: r.label, sub: r.sub, sel: r.sel })),
+  kal: () => ({ ready: !!KAL.ev, prog: KAL.prog, f: KAL.f, start: KAL.start, ev: KAL.ev ? KAL.ev.map(e => ({ type: e.type, t: e.t, title: e.title, sub: e.sub, vis: e.vis, id: e.id })) : null }), kalEnsure: () => kalEnsure(),
+  kalGo: k => { const e = KAL.ev[k]; kalGo(e); return { t: simMs(), mark: S.mark && S.mark.label, sel: S.selected && objName(S.selected) }; }, kalBest: k => kalBestTime(KAL.ev[k]),
   setLaser, setQuality: q => setQuality(q), calibrate,
   ng: () => ({ on: NG.on, why: NG.why, mode: NG.mode, rrOk: NG.rrOk, rrNull: NG.rrNull, sign: NG.sign, noiseH: NG.noiseH, noiseT: NG.noiseT, motion: NG.motion, stats: NG.stats, jit: Math.sqrt(NG.jit.ms) }),
   arDir: () => AR.f ? { az: norm360(Math.atan2(AR.f[1], AR.f[0]) * RAD), alt: Math.asin(clamp(AR.f[2], -1, 1)) * RAD } : null,
