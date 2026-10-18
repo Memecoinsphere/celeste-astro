@@ -127,14 +127,18 @@ Céleste peut piloter une monture motorisée : **GoTo** vers l'objet touché sur
 
 Pourquoi l'iPhone passe toujours par un PC : Safari ne propose ni Web Serial ni Web Bluetooth. En plus, une page HTTPS (GitHub Pages) n'a pas le droit d'appeler un appareil `http://192.168…` (contenu mixte). La passerelle sert donc l'application elle-même sur le réseau local, et tout vient de la même adresse.
 
-### La passerelle PC (`celeste_bridge.py`)
-Un seul fichier, Python 3.8 ou plus récent, sous Windows, macOS, Linux ou Raspberry Pi. `pyserial` n'est nécessaire que pour les ports série/USB.
-1. Installez Python, puis dans un terminal : `pip install pyserial`
-2. Lancez `python3 celeste_bridge.py` depuis le dossier de l'application (Windows : `py celeste_bridge.py`).
-3. Elle affiche une adresse, par exemple `http://192.168.1.20:8765/`. Sur l'iPhone, connecté au **même Wi-Fi**, ouvrez cette adresse dans Safari.
-4. Calques › 🔭 Télescope : choisissez le télescope, puis la liaison « Passerelle PC → port série » (ex. `COM3` ou `/dev/ttyUSB0`, avec « Tester la passerelle » pour voir la liste des ports), « → TCP » (OnStep Wi-Fi : IP de la monture, port 9999 ; indiserver : port 7624) ou « → serveur Alpaca » (bouton « Rechercher »).
-- Options : `--https` (certificat auto-signé à accepter une fois ; utile seulement pour le GPS ou la caméra sur iPhone via la passerelle), `--port 8765`, `--local-only`.
-- Sécurité : seules les pages Céleste peuvent l'utiliser (même adresse, localhost, memecoinsphere.github.io). Le relais Alpaca est limité aux adresses du réseau local. Coupez-la (Ctrl+C) après la séance.
+### La passerelle PC (`celeste-bridge.py`)
+Un seul fichier, Python 3.8 ou plus récent, sous Windows, macOS, Linux ou Raspberry Pi. `pyserial` n'est nécessaire que pour les ports série/USB. Le mode d'emploi complet est en tête du fichier.
+1. Installez Python (Windows : cochez « Add python.exe to PATH »), puis dans un terminal : `pip install pyserial`
+2. Branchez la raquette (ex. SynScan, câble RJ12 → USB FTDI/Prolific), allumez et alignez la monture, puis lancez `python celeste-bridge.py` (Windows : `py celeste-bridge.py`). Le port COM de la raquette est trouvé tout seul. Sinon, la liste des ports s'affiche et vous choisissez. Un câble débranché puis rebranché se reconnecte tout seul.
+3. Windows demande l'accès réseau pour Python : cochez « Réseaux privés », puis Autoriser.
+4. La passerelle affiche une adresse, par exemple `http://192.168.1.20:8765/`. Sur l'iPhone, connecté au **même Wi-Fi**, ouvrez cette adresse dans Safari.
+5. Calques › 🔭 Télescope : choisissez le télescope (« Sky-Watcher SynScan »), puis la liaison « Passerelle PC → port série ». Laissez « Port du PC » vide pour utiliser la raquette détectée (ou tapez `COM3`, `/dev/ttyUSB0`…). Autres liaisons : « → TCP » (OnStep Wi-Fi : IP de la monture, port 9999 ; indiserver : port 7624) ou « → serveur Alpaca » (bouton « Rechercher »).
+- SkySafari, Stellarium et les autres logiciels peuvent aussi se connecter en TCP à la raquette, sur l'IP du PC, port 4030 (type « SynScan » / « NexStar » en Wi-Fi). Les commandes du protocole SynScan sont relayées telles quelles, et le texte façon LX200 aussi. Un verrou empêche deux clients de mélanger leurs commandes : l'iPhone et SkySafari peuvent être branchés en même temps.
+- Avec une raquette SynScan d'une monture équatoriale (EQ3, EQ5, HEQ5, EQ6, EQ8), Céleste lit la version (ex. 04.37.03) et le modèle, et fait un suivi équatorial même si « Monture » est restée sur Altazimutale.
+- Options : `--port COM3` (port de la raquette), `--baud 9600`, `--tcp-port 4030` (0 = désactivé), `--http-port 8765`, `--no-serial`, `--https` (certificat auto-signé à accepter une fois ; utile seulement pour le GPS ou la caméra sur iPhone via la passerelle), `--local-only`.
+- `celeste_bridge.py` (ancien nom) lance toujours la même passerelle, et l'ancienne option `--port 8765` (port HTTP) reste acceptée.
+- Sécurité : seules les pages Céleste peuvent utiliser le relais HTTP (même adresse, localhost, memecoinsphere.github.io). Le relais Alpaca est limité aux adresses du réseau local. Le port TCP 4030 est ouvert au réseau local, comme un module Wi-Fi SynScan : `--local-only` ou `--tcp-port 0` sinon. Coupez la passerelle (Ctrl+C) après la séance.
 - Chrome sur Android ou PC peut aussi garder le site GitHub et viser la passerelle `http://IP-du-PC:8765`. Chrome 142+ demande alors l'autorisation « appareils du réseau local » : acceptez-la.
 
 ### Mode d'emploi rapide
@@ -153,7 +157,7 @@ Sécurité : les objets sous l'horizon sont refusés (la hauteur minimale se rè
 **Simulateur** : choisissez « Simulateur (aucun matériel) » pour tout essayer sans télescope. La monture fictive a une erreur de pointage volontaire de 0,4°/−0,3°, pour s'entraîner au Sync. La passerelle simule aussi LX200, NexStar, Alpaca et INDI (liaison « Passerelle PC → monture simulée »).
 
 ## Fichiers
-`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `telescope.js` (contrôle de télescope), `deepsky.json` / `deepsky.json.gz` (ciel profond, chargé à la demande), `celeste_bridge.py` (passerelle PC), `LICENSES.txt`.
+`index.html`, `style.css`, `app.js` (code de l'application), `skydata.js` (catalogue embarqué, distances HYG CC BY-SA 4.0), `astronomy.browser.min.js` (astronomy-engine 2.1.19, MIT), `sw.js`, `manifest.webmanifest`, `icon.svg`, `serve_https.py`, `telescope.js` (contrôle de télescope), `deepsky.json` / `deepsky.json.gz` (ciel profond, chargé à la demande), `celeste-bridge.py` (passerelle PC ; `celeste_bridge.py` = ancien nom, qui la lance), `LICENSES.txt`.
 
 ## Limites connues
 - Étoiles limitées à mag ≈ 6 (≈ 5 000 étoiles).
@@ -161,7 +165,7 @@ Sécurité : les objets sous l'horizon sont refusés (la hauteur minimale se rè
 - Calendrier : rapprochements calculés vus du centre de la Terre (l'écart vu du lieu peut différer de ≈ 1° pour la Lune ; les occultations ne sont pas calculées) ; dates de pic des étoiles filantes d'après la longitude solaire moyenne de l'IMO (les pics réels varient de quelques heures) ; ZHR = taux idéal (on en voit en pratique bien moins).
 - Positions des étoiles J2000 sans mouvement propre (écart négligeable à l'œil sur quelques décennies) ; précession/nutation et réfraction appliquées via astronomy-engine.
 - Le cap boussole des téléphones est magnétique (déclinaison ≈ 0–1° en France) et sensible aux perturbations : utiliser le curseur « Cap ». Le champ caméra réel varie selon le modèle (curseur « Champ »).
-- Télescope : protocoles écrits d'après les documentations publiques (NexStar Communication Protocol, Meade LX200 Command Set, ASCOM Alpaca, INDI) et testés contre des montures **simulées** (dans le navigateur, dans la passerelle, et via un vrai port série virtuel), **jamais sur du vrai matériel**. Le sens des flèches peut être inversé selon la monture. Pas de suivi d'un satellite. Arrêt du suivi impossible sur certaines raquettes LX200 Meade (pas de commande documentée). Pas de commande de parcage dans le protocole NexStar (parquez avec la raquette).
+- Télescope : protocoles écrits d'après les documentations publiques (NexStar Communication Protocol, SynScan Serial Communication Protocol v3.3, Meade LX200 Command Set, ASCOM Alpaca, INDI) et testés contre des montures **simulées** (dans le navigateur, dans la passerelle, via un vrai port série virtuel, et une raquette SynScan simulée en version 04.37.03), **jamais sur du vrai matériel**. Le sens des flèches peut être inversé selon la monture. Pas de suivi d'un satellite. Arrêt du suivi impossible sur certaines raquettes LX200 Meade (pas de commande documentée). Pas de commande de parcage dans le protocole NexStar (parquez avec la raquette).
 - Mode sans gyroscope : le lissage ajoute un retard d'environ 3° quand on tourne à 10°/s ; un calibrage sur étoile ne compense pas une perturbation magnétique qui change (voiture, rambarde) ; filtre testé sur des flux de capteurs simulés (profil A15), pas sur un vrai A15.
 - L'indice 0–5 est une heuristique (la météo n'est disponible que de la veille à J+2) (nuages, humidité, visibilité, vent, pluie) ; il n'intègre ni la turbulence (seeing) ni la pollution lumineuse ; la Lune est indiquée à part.
 - Voie lactée stylisée (procédurale), pas une photographie.

@@ -1,7 +1,7 @@
 /* Céleste — contrôle de télescope : GoTo, Sync, suivi, déplacements manuels, STOP.
    Protocoles : Celestron NexStar / Sky-Watcher SynScan (raquette), Meade LX200 (et OnStep, compatibles LX200),
    ASCOM Alpaca (REST), INDI (XML, via la passerelle). Liaisons : Web Serial (USB / Bluetooth série),
-   Web Bluetooth (adaptateur BLE-UART), passerelle PC (celeste_bridge.py), simulateur intégré.
+   Web Bluetooth (adaptateur BLE-UART), passerelle PC (celeste-bridge.py), simulateur intégré.
    Pas d'autoguidage par caméra (type PHD2) : le « suivi » est celui de la monture. */
 (() => {
 'use strict';
@@ -134,7 +134,7 @@ class BridgeT { // passerelle PC : port série du PC, TCP (OnStep Wi-Fi, ser2net
   constructor(o) { this.o = o; this.label = 'passerelle'; }
   async open() {
     const r = await bridgeFetch(this.o.url, '/api/open', this.o.chan); this.id = r.id; this.info = r.info || '';
-    this.label = 'passerelle · ' + (this.o.chan.kind === 'serial' ? 'série ' + this.o.chan.port : this.o.chan.kind === 'tcp' ? 'TCP ' + this.o.chan.host + ':' + this.o.chan.port : 'simulateur');
+    this.label = 'passerelle · ' + (this.o.chan.kind === 'serial' ? (this.o.chan.port ? 'série ' + this.o.chan.port : this.info || 'raquette détectée') : this.o.chan.kind === 'tcp' ? 'TCP ' + this.o.chan.host + ':' + this.o.chan.port : 'simulateur');
   }
   write(s) { return bridgeFetch(this.o.url, '/api/write', { id: this.id, data: s }); }
   async read(o) {
@@ -280,9 +280,14 @@ class NexStar {
   async cmd(s, o) { await this.t.flush(); await this.t.write(s); return o ? this.t.read(o) : ''; }
   async connect() {
     const e = await this.cmd('Kx', { term: '#', timeout: 3500 }); if (e !== 'x#') throw new Error('écho incorrect (' + ENC.esc(e) + ') — vérifiez le protocole et la vitesse 9600 bauds');
-    try { const v = await this.cmd('V', { n: 3 }); this.ver = v.charCodeAt(0) + '.' + v.charCodeAt(1); } catch (er) { this.ver = '?'; }
+    try { // SynScan : 6 chiffres hexa (« 042503# » = 04.37.03) ; NexStar : 2 octets binaires + « # »
+      let v = await this.cmd('V', { term: '#', timeout: 1500 });
+      if (/^[0-9A-Fa-f]{6}#$/.test(v)) { this.synscan = true; this.ver = [0, 2, 4].map(i => String(parseInt(v.substr(i, 2), 16)).padStart(2, '0')).join('.'); }
+      else { if (v.length === 2) { v = v[0] + '#'; try { await this.t.read({ n: 1, timeout: 300 }); } catch (er) {} } this.ver = v.charCodeAt(0) + '.' + v.charCodeAt(1); }
+    } catch (er) { this.ver = '?'; }
     let al = true; try { al = (await this.cmd('J', { n: 2 })).charCodeAt(0) === 1; } catch (er) {}
-    this.aligned = al; this.name = (this.o.brand || 'Raquette NexStar') + ' v' + this.ver;
+    let model = ''; try { const m = (await this.cmd('m', { n: 2, timeout: 800 })).charCodeAt(0); if (this.synscan && m <= 4) { this.eqAuto = true; model = ' · ' + ['EQ6', 'HEQ5', 'EQ5', 'EQ3', 'EQ8'][m]; } } catch (er) {}
+    this.aligned = al; this.name = (this.o.brand || 'Raquette NexStar') + ' v' + this.ver + model;
     if (+this.ver.split('.')[0] < 4 && this.ver !== '?') this.caps.sync = false;
     return this.name + (al ? '' : ' — NON alignée : faites l\'alignement sur la raquette d\'abord');
   }
@@ -290,7 +295,7 @@ class NexStar {
   async sync(c) { if (!this.caps.sync) throw new Error('Sync non disponible (raquette < v4.10)'); const [ra, dec] = c[this.caps.frame]; await this.cmd(ENC.nxSync(ra, dec), { term: '#', timeout: 3500 }); }
   async abort() { await this.cmd('M', { term: '#' }); await this.cmd(ENC.nxSlew('ra', 1, 0), { term: '#' }); await this.cmd(ENC.nxSlew('dec', 1, 0), { term: '#' }); }
   async move(dir, on, rate) { const ax = 'ns'.includes(dir) ? 'dec' : 'ra', sg = 'ne'.includes(dir) ? 1 : -1; await this.cmd(ENC.nxSlew(ax, sg, on ? [2, 5, 7, 9][rate] : 0), { term: '#' }); }
-  async setTracking(on) { const mode = !on ? 0 : this.o.geom === 'altaz' ? 1 : observer().latitude >= 0 ? 2 : 3; await this.cmd('T' + String.fromCharCode(mode), { term: '#' }); this.lastTrack = on; }
+  async setTracking(on) { const mode = !on ? 0 : this.o.geom === 'altaz' && !this.eqAuto ? 1 : observer().latitude >= 0 ? 2 : 3; await this.cmd('T' + String.fromCharCode(mode), { term: '#' }); this.lastTrack = on; }
   async poll() {
     const p = ENC.nxParse(await this.cmd('e', { term: '#' })); if (!p) throw new Error('position illisible');
     let sl = null, tr = this.lastTrack ?? null; try { sl = (await this.cmd('L', { term: '#', timeout: 800 }))[0] === '1'; } catch (e) {}
@@ -582,7 +587,7 @@ function linkOpts() {
   if (M.proto === 'sim') f.push(`<label class="tm-f"><span>Protocole</span><select data-cfg="simProto"><option value="lx200">LX200 / OnStep</option><option value="nexstar">NexStar / SynScan</option>${L === 'bsim' ? '<option value="alpaca">Alpaca</option><option value="indi">INDI</option>' : ''}</select></label>`);
   if (L === 'serial' || L === 'bserial') f.push(`<label class="tm-f"><span>Vitesse</span><select data-cfg="baud">${[9600, 19200, 38400, 57600, 115200].map(b => `<option>${b}</option>`).join('')}</select></label>`);
   if (BRIDGE.includes(L)) f.push(inp('bridge', 'Passerelle', bridgeUrl()) + '<button class="btn small" type="button" id="telBridgeTest">Tester la passerelle</button>');
-  if (L === 'bserial') f.push(`<label class="tm-f"><span>Port du PC</span><input data-cfg="chanSerial" list="telPorts" value="${ENC.xml(CFG.chanSerial)}" placeholder="COM3 ou /dev/ttyUSB0"><datalist id="telPorts">${(TEL.ports || []).map(p => `<option value="${ENC.xml(p.device)}">${ENC.xml(p.desc || '')}</option>`).join('')}</datalist></label>`);
+  if (L === 'bserial') f.push(`<label class="tm-f"><span>Port du PC</span><input data-cfg="chanSerial" list="telPorts" value="${ENC.xml(CFG.chanSerial)}" placeholder="vide = raquette détectée (ou COM3…)"><datalist id="telPorts">${(TEL.ports || []).map(p => `<option value="${ENC.xml(p.device)}">${ENC.xml(p.desc || '')}</option>`).join('')}</datalist></label>`);
   if (L === 'btcp') f.push(inp('tcpHost', 'Adresse', '192.168.4.1') + inp('tcpPort', 'Port', String(M.tcpPort || 9999), 'number'));
   if (L === 'balpaca' || L === 'alpaca') f.push(inp('alpacaBase', 'Serveur Alpaca', 'http://192.168.1.20:11111') + inp('dev', 'N° appareil', '0', 'number') + (L === 'balpaca' ? '<button class="btn small" type="button" id="telDiscover">Rechercher les serveurs Alpaca</button>' : ''));
   if (M.proto === 'nexstar' || (M.proto === 'sim' && CFG.simProto === 'nexstar')) f.push(`<label class="tm-f"><span>Monture</span><select data-cfg="geom"><option value="altaz">Altazimutale</option><option value="eq">Équatoriale</option></select></label>`);

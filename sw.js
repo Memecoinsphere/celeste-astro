@@ -1,5 +1,5 @@
 /* Service worker (actif uniquement en HTTPS/localhost) : mise en cache hors ligne de l'application. */
-const CACHE = 'celeste-v15';
+const CACHE = 'celeste-v16';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'skydata.js', 'astronomy.browser.min.js', 'satellite.min.js', 'extreme.js', 'messier.js', 'telescope.js', 'manifest.webmanifest', 'icon.svg'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))) /* toujours le réseau, jamais le cache HTTP (évite un mélange ancien/nouveau) */).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'celeste-tle' && k !== 'celeste-rappels').map(k => caches.delete(k)))).then(() => self.clients.claim())); });
