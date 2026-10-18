@@ -11,6 +11,8 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="manifest" href="manifest.webmanifest">
+<script>/* nouvelle version du service worker : recharger une fois pour ne pas garder un mélange ancien/nouveau */
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) { var swR = 0; navigator.serviceWorker.addEventListener('controllerchange', function () { if (!swR) { swR = 1; location.reload(); } }); }</script>
 </head>
 <body>
 <div id="app">
