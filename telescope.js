@@ -476,7 +476,7 @@ async function doGoto(sel) {
   if (TEL.pos && TEL.pos.parked) { toast('Monture parquée : dé-parquez-la d\'abord.', 5000); return false; }
   const c = C(); if (c && c.S && !c.S.live) toast('GoTo calculé pour l\'heure réelle (pas l\'heure du curseur).', 3500);
   try {
-    await run(() => TEL.drv.goto(T)); TEL.goal = T; wasSlewing = true;
+    await run(() => TEL.drv.goto(T)); TEL.goal = T; TEL.prog = null; TEL.arrived = false; wasSlewing = true; setTimeout(poll, 400);
     TEL.log(`GoTo ${T.name} : AD ${ENC.lxRA(T.jnow[0])} Déc ${ENC.lxDec(T.jnow[1])} (date) / J2000 ${ENC.lxRA(T.j2000[0])} ${ENC.lxDec(T.j2000[1])}`);
     toast(`🔭 GoTo vers ${T.name} lancé — gardez la main près de STOP`, 4000); renderPanel(); return true;
   } catch (e) { toast('GoTo : ' + e.message, 6000); TEL.log('GoTo erreur : ' + e.message); renderPanel('GoTo : ' + e.message); return false; }
@@ -494,7 +494,7 @@ async function doStop() {
   if (!TEL.drv) return;
   try { if (tport && TEL.drv.stopBytes) await tport.write(TEL.drv.stopBytes()); } catch (e) {} // envoi immédiat, hors file d'attente
   try { await run(() => TEL.drv.abort(), true); TEL.log('STOP envoyé'); toast('⛔ STOP envoyé à la monture', 2500); } catch (e) { toast('STOP : ' + e.message + ' — coupez l\'alimentation si la monture bouge encore', 8000); }
-  TEL.goal = null; setTimeout(poll, 300);
+  TEL.goal = null; TEL.prog = null; TEL.arrived = false; TEL.stopped = Date.now(); setTimeout(poll, 300);
 }
 function startMove(dir) {
   if (!TEL.drv || moving) return;
@@ -535,7 +535,7 @@ async function connect() {
     TEL.log('Connecté : ' + name + ' via ' + TEL.linkLabel); toast('🔭 Télescope connecté : ' + name, 3500); TEL.name = name;
     connecting = false; gen++; await poll();
     if (TEL.pos && TEL.pos.parked) toast('⚠️ La monture est parquée : dé-parquez-la avant un GoTo.', 6000);
-    clearInterval(pollTimer); pollTimer = setInterval(poll, 1000);
+    clearTimeout(pollTimer); pollLoop();
     if (C()) { C().refreshInfo(); C().dirty(); }
   } catch (e) {
     connecting = false; TEL.log('Échec de connexion : ' + e.message);
@@ -545,77 +545,58 @@ async function connect() {
   renderPanel();
 }
 async function disconnect(silent) {
-  clearInterval(pollTimer); stopMove(true);
+  clearTimeout(pollTimer); stopMove(true);
   const t = tport, wasParked = TEL.pos && TEL.pos.parked; TEL.drv = null; tport = null; TEL.pos = null; TEL.goal = null; TEL.name = '';
   if (t) try { await t.close(); } catch (e) {}
   if (!silent) { TEL.log('Déconnecté'); if (!wasParked) toast('Télescope déconnecté. Pensez à parquer la monture (raquette) avant de l\'éteindre.', 6000); }
   if (C()) { C().refreshInfo(); C().dirty(); } renderPanel();
 }
 let polling = false;
+function pollLoop() { clearTimeout(pollTimer); if (!TEL.drv) return; pollTimer = setTimeout(async () => { await poll(); pollLoop(); }, TEL.pos && TEL.pos.slewing ? 500 : 1000); }
 async function poll() {
   if (!TEL.drv || polling) return; polling = true;
   try {
     const p = await run(() => TEL.drv.poll()), date = new Date();
     const j = p.frame === 'j2000' ? { ra: p.ra, dec: p.dec } : nowToJ2000(p.ra, p.dec, date), n = p.frame === 'j2000' ? j2000ToNow(p.ra, p.dec, date) : { ra: p.ra, dec: p.dec };
     TEL.pos = { ...p, j2000: [j.ra, j.dec], jnow: [n.ra, n.dec], ...altAzNow(n.ra, n.dec, date), t: Date.now() }; TEL.fails = 0;
-    if (wasSlewing && p.slewing === false) { wasSlewing = false; if (TEL.goal) { const e = sepDeg(TEL.pos.j2000[0], TEL.pos.j2000[1], TEL.goal.j2000[0], TEL.goal.j2000[1]); toast(`🔭 Arrivé sur ${TEL.goal.name}` + (e > 0.2 ? ` (écart ${e.toFixed(1).replace('.', ',')}° — centrez puis Sync)` : ''), 4500); TEL.log('GoTo terminé, écart ' + e.toFixed(3) + '°'); } }
+    if (TEL.goal) { const d = sepDeg(TEL.pos.j2000[0], TEL.pos.j2000[1], TEL.goal.j2000[0], TEL.goal.j2000[1]), P = TEL.prog || (TEL.prog = { d0: d, d, t: Date.now(), v: 0 });
+      const dt = (Date.now() - P.t) / 1000; if (dt > 0.2) { const v = (P.d - d) / dt; P.v = P.v ? P.v * 0.5 + v * 0.5 : v; } P.d0 = Math.max(P.d0, d); P.d = d; P.t = Date.now(); }
+    if (wasSlewing && p.slewing === false) { wasSlewing = false; if (TEL.goal) { const e = sepDeg(TEL.pos.j2000[0], TEL.pos.j2000[1], TEL.goal.j2000[0], TEL.goal.j2000[1]); TEL.arrived = true; toast(`🔭 Arrivé sur ${TEL.goal.name}` + (e > 0.2 ? ` (écart ${e.toFixed(1).replace('.', ',')}° — centrez puis Sync)` : ''), 4500); TEL.log('GoTo terminé, écart ' + e.toFixed(3) + '°'); } }
     if (p.slewing) wasSlewing = true;
   } catch (e) { if (!/annulé/.test(e.message)) { TEL.fails = (TEL.fails || 0) + 1; TEL.log('Lecture position : ' + e.message); if (TEL.fails >= 5) TEL.lost('la monture ne répond plus'); } }
   polling = false; renderStatus(); if (C()) C().dirty();
 }
 
-/* ---------- rendu du panneau ---------- */
+/* ================= Mode télescope (plein écran, 3 étapes) ================= */
 const fmtRA = h => { const s = Math.round(norm360(h * 15) / 15 * 3600) % 86400; return `${Math.floor(s / 3600)}h ${pad(Math.floor(s / 60) % 60)}m ${pad(s % 60)}s`; };
 const fmtDec = d => { const s = Math.round(Math.abs(d) * 60); return `${d < 0 ? '−' : '+'}${Math.floor(s / 60)}° ${pad(s % 60)}′`; };
-const f1 = x => x.toFixed(1).replace('.', ',');
-const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
-function renderStatus() {
-  const el = $('telStatus'); if (!el) return;
-  $('telFabStop').classList.toggle('hidden', !TEL.drv);
-  document.body.classList.toggle('tel-on', !!TEL.drv);
-  if (!TEL.drv) { el.innerHTML = connecting ? '⏳ Connexion…' : '<b>Non connecté</b>'; el.className = 'tel-status'; return; }
-  const p = TEL.pos; let h = `<b>✅ ${ENC.xml(TEL.name)}</b><div class="fine" style="margin:2px 0 0">via ${ENC.xml(TEL.linkLabel)}</div>`;
-  if (p) {
-    h += `<div class="tel-pos">AD ${fmtRA(p.jnow[0])} · Déc ${fmtDec(p.jnow[1])} <span class="fine">(date)</span><br>Hauteur ${f1(p.alt)}° · Azimut ${f1(p.az)}° ${CARD[Math.round(p.az / 45) % 8]}</div>`;
-    const st = []; st.push(p.slewing ? '<span class="tag warn">En mouvement</span>' : p.slewing === false ? '<span class="tag ok">Immobile</span>' : '');
-    if (p.tracking != null) st.push(`<span class="tag ${p.tracking ? 'ok' : ''}">Suivi ${p.tracking ? 'actif' : 'arrêté'}</span>`);
-    if (p.parked) st.push('<span class="tag no">Parquée</span>');
-    if (p.alt < 0) st.push('<span class="tag no">Sous l\'horizon !</span>');
-    h += '<div>' + st.join(' ') + '</div>';
-  }
-  el.innerHTML = h; el.className = 'tel-status on';
-  const tr = $('telTrack'); if (tr && p && p.tracking != null && document.activeElement !== tr) tr.checked = p.tracking;
-  const pk = $('telPark'); if (pk) { pk.classList.toggle('hidden', !(p && p.parked)); }
-  $('telGoto').disabled = !!(p && p.parked);
-}
-function renderTarget() {
-  const el = $('telTarget'); if (!el) return;
-  const T = lastSel && targetOf(lastSel);
-  if (!T) { el.innerHTML = '<span class="muted">Touchez un objet sur la carte (ou cherchez-le), puis revenez ici.</span>'; return; }
-  const s = safety(T); el.innerHTML = `Cible : <b>${ENC.xml(T.name)}</b>` + (T.err ? '' : ` · hauteur ${f1(T.alt)}° · az. ${f1(T.az)}° ${CARD[Math.round(T.az / 45) % 8]}`) + (s.stop ? `<div class="tel-warn">${ENC.xml(s.stop)}</div>` : s.warn ? `<div class="tel-warn soft">${ENC.xml(s.warn.replace(/ Continuer \?$/, ''))}</div>` : '');
-}
+const f0 = x => String(Math.round(x)).replace('-', '−') + '°', f1 = x => x.toFixed(1).replace('.', ',');
+const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'], card = az => CARD[Math.round(norm360(az) / 45) % 8];
+const shortLink = () => MOUNTS[CFG.mount].proto === 'sim' ? 'Simulateur' : (TEL.name || MOUNTS[CFG.mount].n.split(' ')[0]).slice(0, 28);
+let connOpen = null, searchQ = '', escAt = 0;
+TEL.mode = false;
+
 function linkOpts() {
   const M = MOUNTS[CFG.mount], L = CFG.link, f = [];
-  const inp = (k, lbl, ph, type = 'text') => `<label class="field"><span>${lbl}</span><input data-cfg="${k}" type="${type}" value="${ENC.xml(CFG[k] ?? '')}" placeholder="${ENC.xml(ph)}"></label>`;
-  if (M.proto === 'sim') f.push(`<label class="field"><span>Protocole simulé</span><select data-cfg="simProto"><option value="lx200">LX200 / OnStep</option><option value="nexstar">NexStar / SynScan</option>${L === 'bsim' ? '<option value="alpaca">Alpaca</option><option value="indi">INDI</option>' : ''}</select></label>`);
-  if (L === 'serial' || L === 'bserial') f.push(`<label class="field"><span>Vitesse</span><select data-cfg="baud">${[9600, 19200, 38400, 57600, 115200].map(b => `<option>${b}</option>`).join('')}</select></label>`);
+  const inp = (k, lbl, ph, type = 'text') => `<label class="tm-f"><span>${lbl}</span><input data-cfg="${k}" type="${type}" value="${ENC.xml(CFG[k] ?? '')}" placeholder="${ENC.xml(ph)}"></label>`;
+  if (M.proto === 'sim') f.push(`<label class="tm-f"><span>Protocole</span><select data-cfg="simProto"><option value="lx200">LX200 / OnStep</option><option value="nexstar">NexStar / SynScan</option>${L === 'bsim' ? '<option value="alpaca">Alpaca</option><option value="indi">INDI</option>' : ''}</select></label>`);
+  if (L === 'serial' || L === 'bserial') f.push(`<label class="tm-f"><span>Vitesse</span><select data-cfg="baud">${[9600, 19200, 38400, 57600, 115200].map(b => `<option>${b}</option>`).join('')}</select></label>`);
   if (BRIDGE.includes(L)) f.push(inp('bridge', 'Passerelle', bridgeUrl()) + '<button class="btn small" type="button" id="telBridgeTest">Tester la passerelle</button>');
-  if (L === 'bserial') f.push(`<label class="field"><span>Port du PC</span><input data-cfg="chanSerial" list="telPorts" value="${ENC.xml(CFG.chanSerial)}" placeholder="COM3 ou /dev/ttyUSB0"><datalist id="telPorts">${(TEL.ports || []).map(p => `<option value="${ENC.xml(p.device)}">${ENC.xml(p.desc || '')}</option>`).join('')}</datalist></label>`);
+  if (L === 'bserial') f.push(`<label class="tm-f"><span>Port du PC</span><input data-cfg="chanSerial" list="telPorts" value="${ENC.xml(CFG.chanSerial)}" placeholder="COM3 ou /dev/ttyUSB0"><datalist id="telPorts">${(TEL.ports || []).map(p => `<option value="${ENC.xml(p.device)}">${ENC.xml(p.desc || '')}</option>`).join('')}</datalist></label>`);
   if (L === 'btcp') f.push(inp('tcpHost', 'Adresse', '192.168.4.1') + inp('tcpPort', 'Port', String(M.tcpPort || 9999), 'number'));
-  if (L === 'balpaca' || L === 'alpaca') f.push(inp('alpacaBase', 'Serveur Alpaca', 'http://192.168.1.20:11111') + inp('dev', 'N° appareil', '0', 'number') + (L === 'balpaca' ? '<button class="btn small" type="button" id="telDiscover">Rechercher (découverte Alpaca)</button>' : ''));
-  if (M.proto === 'nexstar' || (M.proto === 'sim' && CFG.simProto === 'nexstar')) f.push(`<label class="field"><span>Monture</span><select data-cfg="geom"><option value="altaz">Altazimutale</option><option value="eq">Équatoriale</option></select></label>`);
-  if (['nexstar', 'lx200'].includes(M.proto)) f.push(`<label class="field"><span>Coordonnées</span><select data-cfg="epoch"><option value="jnow">de la date (JNow, standard)</option><option value="j2000">J2000</option></select></label>`);
+  if (L === 'balpaca' || L === 'alpaca') f.push(inp('alpacaBase', 'Serveur Alpaca', 'http://192.168.1.20:11111') + inp('dev', 'N° appareil', '0', 'number') + (L === 'balpaca' ? '<button class="btn small" type="button" id="telDiscover">Rechercher les serveurs Alpaca</button>' : ''));
+  if (M.proto === 'nexstar' || (M.proto === 'sim' && CFG.simProto === 'nexstar')) f.push(`<label class="tm-f"><span>Monture</span><select data-cfg="geom"><option value="altaz">Altazimutale</option><option value="eq">Équatoriale</option></select></label>`);
+  if (['nexstar', 'lx200'].includes(M.proto)) f.push(`<label class="tm-f"><span>Coordonnées</span><select data-cfg="epoch"><option value="jnow">de la date (standard)</option><option value="j2000">J2000</option></select></label>`);
   return f.join('');
 }
 function compatText() {
   const M = MOUNTS[CFG.mount], L = LINKS[CFG.link]; let s = M.note;
   if (L && !L.ok()) s += '<br><b>⚠️ ' + L.why + '.</b>';
-  if (CFG.link === 'alpaca') s += '<br>Alpaca direct ne marche que si le serveur autorise CORS et, depuis la version HTTPS, avec Chrome 142+ (autorisation « réseau local ») ; sinon utilisez la passerelle.';
-  if (BRIDGE.includes(CFG.link) && location.protocol === 'https:' && !TEL.servedByBridge) s += '<br>iPhone/Safari : ouvrez l\'adresse affichée par la passerelle (ex. http://192.168.1.20:8765) au lieu de ce site. Chrome (Android/PC) : autorisez l\'accès au réseau local.';
+  if (CFG.link === 'alpaca') s += '<br>Alpaca direct : seulement si le serveur autorise CORS (et Chrome 142+ depuis la version HTTPS) ; sinon passez par la passerelle.';
+  if (BRIDGE.includes(CFG.link) && location.protocol === 'https:' && !TEL.servedByBridge) s += '<br>iPhone : ouvrez l\'adresse affichée par la passerelle (ex. http://192.168.1.20:8765) au lieu de ce site. Chrome : autorisez l\'accès au réseau local.';
   return s;
 }
-function renderPanel(msg) {
-  const box = $('telConn'); if (!box) return;
+function renderConn(msg) {
   const ms = $('telMount'), ls = $('telLink'), M = MOUNTS[CFG.mount];
   if (!ms.options.length) ms.innerHTML = Object.entries(MOUNTS).map(([k, m]) => `<option value="${k}">${m.n}</option>`).join('');
   ms.value = CFG.mount;
@@ -625,35 +606,132 @@ function renderPanel(msg) {
   $('telLinkOpts').innerHTML = M.proto ? linkOpts() : '';
   $('telLinkOpts').querySelectorAll('[data-cfg]').forEach(el => { if (el.tagName === 'SELECT') el.value = String(CFG[el.dataset.cfg]); el.disabled = !!TEL.drv; });
   $('telCompat').innerHTML = compatText();
-  $('telMsg').textContent = msg || ''; $('telMsg').classList.toggle('hidden', !msg);
-  $('telConnect').classList.toggle('hidden', !!TEL.drv); $('telConnect').disabled = !M.proto || connecting;
+  $('telConnect').classList.toggle('hidden', !!TEL.drv); $('telConnect').disabled = !M.proto || connecting; $('telConnect').textContent = connecting ? 'Connexion…' : 'Connecter';
   $('telDisconnect').classList.toggle('hidden', !TEL.drv);
-  document.querySelectorAll('.tel-ctl').forEach(e => e.classList.toggle('dis', !TEL.drv));
-  $('telSync').disabled = !TEL.drv || !TEL.drv.caps.sync; $('telTrack').disabled = !TEL.drv || !TEL.drv.caps.tracking;
-  $('telParkBtn').classList.toggle('hidden', !(TEL.drv && TEL.drv.caps.park));
-  $('telRate').value = CFG.rate; $('telMinAlt').value = CFG.minAlt; $('telSolar').checked = !!CFG.solar;
-  renderStatus(); renderTarget();
+  $('telConnForm').classList.toggle('hidden', !!TEL.drv);
+  if (msg !== undefined) { $('telMsg').textContent = msg || ''; $('telMsg').classList.toggle('hidden', !msg); }
 }
+function renderChip() {
+  const ch = $('telChip'), p = TEL.pos;
+  ch.className = 'tm-chip ' + (TEL.drv ? 'on' : connecting ? 'wait' : 'off');
+  ch.innerHTML = TEL.drv ? `<i></i>Connecté · ${ENC.xml(shortLink())}<small>${p ? (p.slewing ? 'en mouvement' : p.parked ? 'parquée' : 'immobile') : ''}</small>` : connecting ? '<i></i>Connexion…' : '<i></i>Non connecté';
+  ch.setAttribute('aria-expanded', String(!$('tmStep1').classList.contains('folded')));
+}
+function renderStatus() {
+  if (!$('telMode')) return;
+  $('telFabStop').classList.toggle('hidden', !TEL.drv || TEL.mode);
+  $('telFab').classList.toggle('hidden', !TEL.drv || TEL.mode);
+  document.body.classList.toggle('tel-on', !!TEL.drv);
+  renderChip();
+  const p = TEL.pos, st = $('telStatus');
+  st.innerHTML = TEL.drv && p ? `Télescope : hauteur ${f0(p.alt)} · ${card(p.az)} ${f0(p.az)} · ${p.tracking == null ? '' : p.tracking ? 'suivi actif' : '<b>suivi arrêté</b>'}${p.parked ? ' · <b>parquée</b>' : ''}${p.alt < 0 ? ' · <b>sous l\'horizon !</b>' : ''}<span class="tm-coord">AD ${fmtRA(p.jnow[0])} · Déc ${fmtDec(p.jnow[1])}</span>` : '';
+  const tr = $('telTrack'); if (tr && p && p.tracking != null && document.activeElement !== tr) tr.checked = p.tracking;
+  $('telPark').classList.toggle('hidden', !(p && p.parked));
+  renderGo();
+}
+function renderGo() {
+  const b = $('telGoto'), lbl = $('telGoLbl'), sub = $('telTarget'), bar = $('telProg'), T = lastSel && targetOf(lastSel), p = TEL.pos;
+  const s = T ? safety(T) : null; let cls = 'tm-go', main = 'Pointer', txt = '', pr = 0;
+  if (!T) { main = 'Pointer'; txt = 'Choisissez d\'abord un astre (étape 2)'; cls += ' dis'; }
+  else if (s.stop) { main = 'Pointer · ' + T.name; cls += ' bad'; txt = T.err ? T.err : T.key === 'Sun' ? '☀️ Soleil refusé (danger pour les yeux)' : T.alt < CFG.minAlt ? `sous ${CFG.minAlt > 0 ? 'la hauteur minimale' : 'l\'horizon'} (${f0(T.alt)}) : choisissez un autre astre` : s.stop; }
+  else { main = 'Pointer · ' + T.name; txt = `hauteur ${f0(T.alt)} · ${card(T.az)}` + (s.warn ? ' · ⚠️ ' + (/Soleil/.test(s.warn) ? 'proche du Soleil' : 'très bas') : ''); }
+  if (!TEL.drv && T) { txt += ' · connectez d\'abord (étape 1)'; cls += ' dis'; }
+  if (TEL.drv && TEL.goal && p) {
+    const P = TEL.prog;
+    if (p.slewing || (P && !TEL.arrived && Date.now() - (TEL.goalT || 0) < 1500)) {
+      main = 'En route vers ' + TEL.goal.name + '…'; cls = 'tm-go run';
+      if (P) { pr = P.d0 > 0 ? clamp(1 - P.d / P.d0, 0, 1) : 0; const eta = P.v > 0.05 ? Math.ceil(P.d / P.v) : null; txt = `reste ${P.d >= 10 ? f0(P.d) : f1(P.d) + '°'}${eta != null ? ' · ~' + (eta >= 60 ? Math.round(eta / 60) + ' min' : eta + ' s') : ''} · STOP pour arrêter`; }
+      else txt = 'départ…';
+    } else if (TEL.arrived && lastSel && T && T.name === TEL.goal.name) {
+      main = '✓ Sur ' + TEL.goal.name; cls = 'tm-go ok'; pr = 1;
+      const e = P ? P.d : 0; txt = e > 0.2 ? `écart ${f1(e)}° : centrez avec les flèches puis Sync` : 'Pas centré dans l\'oculaire ? flèches puis Sync';
+    }
+  }
+  if (TEL.drv && !TEL.goal && TEL.stopped && Date.now() - TEL.stopped < 8000 && T && !s.stop) txt = '⛔ Arrêté · touchez pour pointer à nouveau';
+  if (p && p.parked) { cls = 'tm-go dis'; txt = 'Monture parquée : dé-parquez-la (ci-dessous)'; }
+  b.className = cls; lbl.textContent = main; sub.textContent = txt; bar.style.width = (pr * 100).toFixed(0) + '%';
+  b.querySelector('.tm-prog').classList.toggle('hidden', !pr && !/run/.test(cls));
+  $('telSync').disabled = !TEL.drv || !TEL.drv.caps.sync || !T; $('telTrack').disabled = !TEL.drv || !TEL.drv.caps.tracking;
+  $('telSyncLbl').textContent = T ? 'Sync sur ' + T.name : 'Sync';
+  $('telParkBtn').classList.toggle('hidden', !(TEL.drv && TEL.drv.caps.park));
+  document.querySelectorAll('.tm-need').forEach(e => e.classList.toggle('dis', !TEL.drv));
+}
+function renderList() {
+  const el = $('telList'), c = C(); if (!el || !c) return;
+  const q = searchQ.trim(); let items, head;
+  if (q) { items = c.telSearch(q); head = items.length ? 'Résultats' : 'Aucun résultat'; }
+  else { items = c.telSuggest(); head = 'Visibles maintenant'; }
+  const cur = lastSel && c.telTarget(lastSel), curName = cur && cur.name;
+  TEL.listItems = items;
+  el.innerHTML = `<div class="tm-lh">${head}</div>` + items.map((it, k) => `<button type="button" class="tm-item${it.name === curName ? ' sel' : ''}${it.alt != null && it.alt < 0 ? ' low' : ''}" data-k="${k}"><b>${ENC.xml(it.name)}</b><small>${ENC.xml(it.sub || '')}${it.alt != null ? ' · ' + f0(it.alt) : ''}</small></button>`).join('');
+}
+function pick(sel, center = true) {
+  lastSel = sel; const c = C();
+  if (c) { c.select(sel); if (center) c.centerOn(sel); }
+  TEL.arrived = false; renderList(); renderGo();
+}
+function renderPanel(msg) { if (!$('telMode')) return; renderConn(msg); renderStatus(); if (TEL.mode) renderList(); }
+function setFold(open) { connOpen = open; $('tmStep1').classList.toggle('folded', !open); renderChip(); measure(); }
+function measure() { // zone de carte visible (hors feuille) → centre de vue décalé
+  if (!TEL.mode) { TEL.view = null; return; }
+  const sh = $('telSheet').getBoundingClientRect(), top = $('telTop').getBoundingClientRect(), W = innerWidth, H = innerHeight;
+  if (sh.right < W * 0.6 && sh.top < H * 0.5) TEL.view = { cx: sh.right + (W - sh.right) / 2, cy: H / 2 };
+  else TEL.view = { cx: W / 2, cy: Math.max(top.bottom + 40, (top.bottom + sh.top) / 2) };
+  if (C()) C().dirty();
+}
+function enterMode(sel) {
+  const c = C(); if (!c) return;
+  c.closeAll(); if (c.AR && c.AR.on) $('arBtn').click();
+  if (!c.S.live) c.setLive();
+  TEL.mode = true; c.S.telmode = true; document.body.classList.add('telmode'); $('telMode').classList.remove('hidden');
+  c.overlayOpened('telmode');
+  if (sel) pick(sel); else if (lastSel) pick(lastSel, true);
+  setFold(connOpen == null ? !TEL.drv : (!TEL.drv || connOpen));
+  searchQ = ''; $('telSearch').value = '';
+  renderPanel(); setTimeout(measure, 30);
+  try { localStorage.setItem('celeste.telUsed', '1'); } catch (e) {}
+}
+function exitMode(fromHistory) {
+  if (!TEL.mode) return; stopMove(true);
+  const c = C(); TEL.mode = false; if (c) { c.S.telmode = false; c.select(null); } document.body.classList.remove('telmode'); $('telMode').classList.add('hidden');
+  TEL.view = null; if (c) { c.dirty(); if (!fromHistory) c.overlayClosed('telmode'); }
+  renderStatus();
+}
+TEL.escape = () => { // Échap : d'abord STOP (sécurité), un 2e Échap quitte le mode
+  if (!TEL.mode) return false;
+  if (connOpen && TEL.drv) { setFold(false); return true; }
+  if (TEL.drv && Date.now() - escAt > 2000) { escAt = Date.now(); doStop(); toast('⛔ STOP envoyé — Échap encore pour quitter le mode télescope', 2500); return true; }
+  exitMode(); return true;
+};
 
 function bind() {
-  if (!$('telConn')) return;
-  $('telMount').onchange = e => { CFG.mount = e.target.value; save(); renderPanel(); };
-  $('telLink').onchange = e => { CFG.link = e.target.value; save(); renderPanel(); };
+  if (!$('telMode')) return;
+  $('telMount').onchange = e => { CFG.mount = e.target.value; save(); renderPanel(''); };
+  $('telLink').onchange = e => { CFG.link = e.target.value; save(); renderPanel(''); };
   $('telLinkOpts').addEventListener('change', e => { const k = e.target.dataset.cfg; if (!k) return; CFG[k] = e.target.type === 'number' ? +e.target.value : e.target.value; save(); if (k === 'simProto' || k === 'baud') renderPanel(); });
   $('telLinkOpts').addEventListener('click', async e => {
     if (e.target.id === 'telBridgeTest') { try { const r = await bridgeFetch(bridgeUrl(), '/api/info'); TEL.ports = r.ports || []; renderPanel(`Passerelle OK (v${r.version}) · ports série : ${r.ports && r.ports.length ? r.ports.map(p => p.device).join(', ') : 'aucun' + (r.serial ? '' : ' (pyserial absent)')}`); } catch (er) { renderPanel(er.message); } }
     if (e.target.id === 'telDiscover') { try { const r = await bridgeFetch(bridgeUrl(), '/api/alpaca/discover'); if (r.servers && r.servers.length) { CFG.alpacaBase = 'http://' + r.servers[0].host + ':' + r.servers[0].port; save(); } renderPanel(r.servers && r.servers.length ? 'Serveurs Alpaca : ' + r.servers.map(s => s.host + ':' + s.port).join(', ') : 'Aucun serveur Alpaca trouvé sur le réseau'); } catch (er) { renderPanel(er.message); } }
   });
-  $('telConnect').onclick = connect; $('telDisconnect').onclick = () => disconnect();
-  $('telGoto').onclick = () => doGoto(); $('telSync').onclick = doSync;
+  $('telConnect').onclick = async () => { await connect(); if (TEL.drv) { setFold(false); renderList(); } };
+  $('telDisconnect').onclick = async () => { await disconnect(); setFold(true); };
+  $('telChip').onclick = () => setFold(!connOpen);
+  $('telGoto').onclick = () => { if (!lastSel) { $('telSearch').focus(); return; } if (!TEL.drv) { setFold(true); toast('Connectez d\'abord le télescope (étape 1)'); return; } TEL.goalT = Date.now(); doGoto(); };
+  $('telSync').onclick = doSync;
   $('telStop').onclick = doStop; $('telFabStop').onclick = doStop;
+  $('telFab').onclick = () => enterMode();
+  $('telQuit').onclick = () => exitMode();
+  $('telSearch').addEventListener('input', e => { searchQ = e.target.value; renderList(); });
+  $('telSearch').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const it = (TEL.listItems || [])[0]; if (it) { pick(it.sel); e.target.blur(); } } });
+  $('telList').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; const it = TEL.listItems[+b.dataset.k]; if (it) { pick(it.sel); $('telSearch').blur(); } });
   $('telTrack').onchange = async e => { const on = e.target.checked; try { await run(() => TEL.drv.setTracking(on)); TEL.log('Suivi ' + (on ? 'activé' : 'arrêté')); toast('Suivi ' + (on ? 'sidéral activé' : 'arrêté')); } catch (er) { e.target.checked = !on; toast('Suivi : ' + er.message, 5000); } };
   $('telParkBtn').onclick = async () => { if (!confirm('Parquer la monture (position de rangement) ?')) return; try { await run(() => TEL.drv.park()); toast('Parcage en cours…'); } catch (er) { toast('Parcage : ' + er.message); } };
   $('telUnpark').onclick = async () => { try { await run(() => TEL.drv.unpark()); toast('Monture dé-parquée'); setTimeout(poll, 300); } catch (er) { toast(er.message, 5000); } };
   $('telRate').onchange = e => { CFG.rate = +e.target.value; save(); };
-  $('telMinAlt').onchange = e => { CFG.minAlt = clamp(+e.target.value || 0, -5, 60); save(); renderTarget(); };
-  $('telSolar').onchange = e => { CFG.solar = e.target.checked; save(); renderTarget(); };
-  document.querySelectorAll('.tel-pad [data-dir]').forEach(b => {
+  $('telMinAlt').onchange = e => { CFG.minAlt = clamp(+e.target.value || 0, -5, 60); save(); renderGo(); };
+  $('telSolar').onchange = e => { CFG.solar = e.target.checked; save(); renderGo(); };
+  $('telRate').value = CFG.rate; $('telMinAlt').value = CFG.minAlt; $('telSolar').checked = !!CFG.solar;
+  document.querySelectorAll('.tm-pad [data-dir]').forEach(b => {
     const d = b.dataset.dir;
     b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (er) {} startMove(d); });
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => stopMove());
@@ -661,15 +739,19 @@ function bind() {
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopMove(); });
   window.addEventListener('blur', () => stopMove());
-  document.addEventListener('keydown', e => { if (TEL.drv && e.key === 'Escape') doStop(); });
-  $('infoCard').addEventListener('click', e => { if (e.target.closest('[data-telgoto]')) doGoto(); });
+  window.addEventListener('resize', () => setTimeout(measure, 60));
+  if (window.ResizeObserver) new ResizeObserver(() => measure()).observe($('telSheet'));
+  $('infoCard').addEventListener('click', e => { if (e.target.closest('[data-telgoto]')) { const c = C(); enterMode(c && c.S.selected); } });
+  setInterval(() => { if (TEL.mode && !TEL.drv) renderGo(); if (TEL.mode && !searchQ) renderList(); }, 30000);
   renderPanel();
 }
 
 /* ---------- interface publique pour app.js ---------- */
-TEL.onSelect = s => { if (s) lastSel = s; if (!$('panel-telescope').classList.contains('hidden')) renderTarget(); };
+TEL.onSelect = s => { if (!TEL.mode) { if (s) lastSel = s; return; } if (s) { lastSel = s; TEL.arrived = false; renderList(); renderGo(); } };
 TEL.connected = () => !!TEL.drv;
-TEL.onOpen = () => renderPanel();
+TEL.used = () => !!TEL.drv || (() => { try { return !!localStorage.getItem('celeste.telUsed'); } catch (e) { return false; } })();
+TEL.viewOffset = () => TEL.mode ? TEL.view : null;
+TEL.enterMode = enterMode; TEL.exitMode = exitMode;
 TEL.draw = (ctx, projEqj) => { // repère du télescope sur la carte
   if (!TEL.drv || !TEL.pos) return;
   const p = TEL.pos, q = projEqj(vec(p.j2000[0] * 15, p.j2000[1])); let g = null;
@@ -680,11 +762,11 @@ TEL.draw = (ctx, projEqj) => { // repère du télescope sur la carte
     ctx.strokeStyle = 'rgba(120,255,170,.95)'; ctx.lineWidth = 2; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.beginPath(); ctx.arc(q.x, q.y, 18, 0, 6.2832); ctx.stroke(); ctx.beginPath(); ctx.arc(q.x, q.y, 6, 0, 6.2832); ctx.stroke();
     ctx.beginPath(); for (const [a, b] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) { ctx.moveTo(q.x + a * 10, q.y + b * 10); ctx.lineTo(q.x + a * 26, q.y + b * 26); } ctx.stroke();
-    ctx.fillStyle = 'rgba(120,255,170,.95)'; ctx.font = '600 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.slewing ? 'Télescope (GoTo…)' : 'Télescope', q.x, q.y + 40);
+    ctx.fillStyle = 'rgba(120,255,170,.95)'; ctx.font = '600 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.slewing ? 'Télescope (en route…)' : 'Télescope', q.x, q.y + 40);
   }
   ctx.restore();
 };
-TEL.api = { connect, disconnect, doGoto, doSync, doStop, startMove, stopMove, poll, cfg: () => CFG, setCfg: o => { Object.assign(CFG, o); save(); renderPanel(); }, target: () => targetOf(lastSel), safety, run, sunNow, sepDeg };
+TEL.api = { connect, disconnect, doGoto, doSync, doStop, startMove, stopMove, poll, enterMode, exitMode, pick, cfg: () => CFG, setCfg: o => { Object.assign(CFG, o); save(); renderPanel(); }, target: () => targetOf(lastSel), safety, run, sunNow, sepDeg };
 // L'app est-elle servie par la passerelle (iPhone sur le Wi-Fi) ?
 if (location.protocol !== 'file:' && !/github\.io$/.test(location.hostname)) fetch('api/info', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j && j.bridge === 'celeste') { TEL.servedByBridge = true; TEL.ports = j.ports || []; if (!CFG.bridge) renderPanel(); } }).catch(() => {});
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();

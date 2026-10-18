@@ -50,9 +50,9 @@ Détection automatique (`devicemotion` sans `rotationRate`, ou orientation très
 
 **Calibrer sur une étoile** : le bouton « Calibrer » propose 3 à 5 astres brillants au-dessus de l'horizon (Lune, planètes, étoiles brillantes) ou l'objet recherché. On centre le vrai astre dans le cercle jaune, on touche « Valider » : l'app calcule les décalages d'azimut et de hauteur et affiche l'erreur résiduelle. Une 2e étoile (à plus de 30° de la première) ajoute la correction d'inclinaison. Le calibrage est enregistré sur l'appareil (`localStorage`) et réinitialisable ; l'ancienne option « viser le Nord » reste disponible dans la même fenêtre.
 
-## Télescope : GoTo, Sync et suivi (Calques › « 🔭 Télescope »)
+## Télescope : GoTo, Sync et suivi (« Mode télescope »)
 
-Céleste peut piloter une monture motorisée : **GoTo** vers l'objet touché sur la carte, **Sync** (recaler la monture sur une étoile centrée), **suivi sidéral** marche/arrêt, **flèches** de déplacement (maintenir appuyé, 4 vitesses), **parcage**, et un gros bouton **STOP** (aussi la touche Échap, et un bouton flottant « STOP télescope » quand le panneau est fermé). La position du télescope s'affiche sur la carte (réticule vert). Pour l'objet visé, l'app envoie les coordonnées de la date (précession et nutation appliquées) ou J2000, selon le protocole ou le réglage.
+Céleste peut piloter une monture motorisée : **GoTo** vers l'objet touché sur la carte, **Sync** (recaler la monture sur une étoile centrée), **suivi sidéral** marche/arrêt, **flèches** de déplacement (maintenir appuyé, 4 vitesses), **parcage**, et un gros bouton **STOP**, toujours visible dans le mode télescope (aussi la touche Échap, et un bouton flottant « STOP télescope » hors du mode). La position du télescope s'affiche sur la carte (réticule vert). Pour l'objet visé, l'app envoie les coordonnées de la date (précession et nutation appliquées) ou J2000, selon le protocole ou le réglage.
 
 « Autoguidage » veut dire ici : GoTo, puis suivi sidéral de la monture, avec un Sync pour corriger. **L'autoguidage par caméra de guidage (type PHD2) n'est pas pris en charge.**
 
@@ -83,11 +83,15 @@ Un seul fichier, Python 3.8 ou plus récent, sous Windows, macOS, Linux ou Raspb
 - Chrome sur Android ou PC peut aussi garder le site GitHub et viser la passerelle `http://IP-du-PC:8765`. Chrome 142+ demande alors l'autorisation « appareils du réseau local » : acceptez-la.
 
 ### Mode d'emploi rapide
+Tout se fait dans un écran unique, le **Mode télescope** : la carte reste visible avec le réticule vert du télescope, et une feuille en bas (à gauche en paysage et sur ordinateur) présente 3 étapes. Les autres panneaux se ferment.
 1. Faites l'alignement habituel sur la raquette (ou dans le logiciel de la monture) et vérifiez l'heure et le lieu dans Céleste.
-2. Calques › « 🔭 Télescope : GoTo, Sync, suivi » › choisissez le télescope et la liaison › **Connecter** (Web Serial ou Bluetooth : choisissez l'appareil dans la fenêtre du navigateur).
-3. Touchez une étoile, une planète ou un objet Messier sur la carte : la fiche affiche **« 🔭 GoTo télescope »**. Sinon, utilisez le bouton GoTo du panneau.
-4. À l'arrivée, si l'objet n'est pas centré : centrez-le avec les flèches, puis **Sync**. Les GoTo suivants seront plus précis.
-5. **STOP** arrête tout, immédiatement. En fin de séance : parquez la monture, puis Déconnecter.
+2. Ouvrez le mode : Calques › « 🔭 Mode télescope », le bouton « Télescope » de la barre latérale (une fois connecté), ou « 🔭 Pointer avec le télescope » sur la fiche d'un astre (il est alors présélectionné).
+3. **① Connexion** : choisissez le télescope et la liaison, puis **Connecter** (Web Serial ou Bluetooth : choisissez l'appareil dans la fenêtre du navigateur). L'étape se replie en une pastille « Connecté · … » ; touchez-la pour la rouvrir.
+4. **② Choisir l'astre** : tapez un nom (Véga, Saturne, M31…), ou prenez-le dans « Visibles maintenant », ou touchez-le sur la carte (pas de grande fiche dans ce mode).
+5. **③ Pointer** : le gros bouton indique l'astre et sa hauteur ; pendant le déplacement il montre la distance restante, une durée estimée et une barre de progression. À l'arrivée, si l'objet n'est pas centré : centrez-le avec les flèches (maintenir appuyé), puis **Sync**.
+6. **STOP** (en haut de la feuille, toujours visible) arrête tout, immédiatement. « Quitter le mode télescope » revient à la carte normale, sans déconnecter. En fin de séance : « Plus » › Parquer, puis rouvrez la pastille › Déconnecter.
+
+Retour (Android) ou geste retour (iPhone) ferme le mode. Sur ordinateur, Échap envoie STOP ; un 2e Échap dans les 2 secondes quitte le mode. Dans toute l'app, un seul panneau est ouvert à la fois : ouvrir un panneau ferme les autres et la fiche, et le retour ou Échap ferme celui du dessus.
 
 Sécurité : les objets sous l'horizon sont refusés (la hauteur minimale se règle). Le Soleil est refusé sauf si vous cochez « filtre solaire certifié installé ». Une alerte s'affiche si l'objet est à moins de 20° du Soleil levé. Les flèches s'arrêtent dès qu'on relâche, et au plus tard après 20 s ; une monture parquée bloque GoTo et flèches. Le GoTo utilise toujours l'heure réelle, même si le curseur du temps est déplacé.
 

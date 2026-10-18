@@ -301,6 +301,7 @@ function proj(N, E, U) {
 const onScreen = (m = 0) => P.x > -m && P.x < W + m && P.y > -m && P.y < H + m;
 function setupView() {
   V.cx = W / 2; V.cy = H / 2;
+  { const o = !AR.on && window.CELESTE_TEL && window.CELESTE_TEL.viewOffset(); if (o) { V.cx = o.cx; V.cy = o.cy; } }
   if (AR.on && AR.f) {
     V.gnomonic = true;
     Object.assign(V, AR.basis);
@@ -781,7 +782,7 @@ function renderInfo() {
     <dt>Altitude du centre</dt><dd>${fmtDeg(alt)}</dd><dt>Azimut</dt><dd>${fmtDeg(az)} ${cardinal(az)}</dd>${riseRows(r, ms)}</dl>`;
   }
   html += `<div class="row-btns"><button class="btn" id="centerSel">Centrer</button></div>`;
-  if (window.CELESTE_TEL && window.CELESTE_TEL.connected() && s.kind !== 'sat') html += '<div class="tel-act"><button class="btn accent" data-telgoto type="button">🔭 GoTo télescope</button></div>';
+  if (window.CELESTE_TEL && window.CELESTE_TEL.used() && s.kind !== 'sat') html += '<div class="tel-act"><button class="btn accent" data-telgoto type="button">🔭 Pointer avec le télescope</button></div>';
   $('infoContent').innerHTML = html;
   $('centerSel').onclick = () => centerOn(S.selected);
 }
@@ -844,7 +845,10 @@ function handleTap(x, y, touch) {
   if (best) select(best.kind === 'star' ? { kind: 'star', i: best.i } : best.kind === 'body' ? { kind: 'body', bi: best.bi } : best.kind === 'sat' ? { kind: 'sat', id: best.id } : best.kind === 'xo' ? { kind: 'xo', i: best.i } : best.kind === 'mes' ? { kind: 'mes', i: best.i } : { kind: 'con', c: best.c });
   else select(null);
 }
-function select(s) { S.selected = s; if (window.CELESTE_TEL) window.CELESTE_TEL.onSelect(s); renderInfo(); S.dirty = true; }
+function select(s) {
+  S.selected = s; if (s && !S.telmode) closePanels(); // un seul panneau à la fois : la fiche remplace le panneau ouvert
+  if (window.CELESTE_TEL) window.CELESTE_TEL.onSelect(s); renderInfo(); S.dirty = true; syncHistory();
+}
 function objAltAz(s) {
   const v = s.kind === 'star' ? [SN[s.i], SE[s.i], SU[s.i]] : s.kind === 'body' ? sky.bodies[s.bi].neu : s.kind === 'sat' ? satNEU(s.id) : s.kind === 'xo' ? xoNEU(s.i) : s.kind === 'mes' ? mesNEU(s.i) : eqjToNEU(s.c.v[0], s.c.v[1], s.c.v[2], [0, 0, 0]);
   return neuToAltAz(v);
@@ -928,22 +932,45 @@ let toastTimer = 0;
 function toast(msg, ms = 4200) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms); }
 
 /* ---------------- Panneaux ---------------- */
-const PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier', 'telescope'];
+var PANELS = ['tonight', 'forecast', 'layers', 'location', 'sats', 'messier'];
 function openPanel(name, forceOpen) {
   const el = $('panel-' + name); const willOpen = forceOpen || el.classList.contains('hidden');
   PANELS.forEach(n => $('panel-' + n).classList.toggle('hidden', !(n === name && willOpen)));
   document.querySelectorAll('.fab[data-panel]').forEach(b => b.classList.toggle('on', b.dataset.panel === name && willOpen));
+  if (willOpen) { if (S.selected) select(null); closeSearch(); }
+  syncHistory();
   if (!willOpen) return;
-  if (window.innerWidth <= 720) select(null);
   if (name === 'tonight') renderTonight();
   if (name === 'forecast') loadForecast();
-  if (name === 'telescope' && window.CELESTE_TEL) window.CELESTE_TEL.onOpen();
 }
+function openPanelName() { return (PANELS || []).find(n => !$('panel-' + n).classList.contains('hidden')) || null; }
+function closePanels() { if (!openPanelName()) return; PANELS.forEach(n => $('panel-' + n).classList.add('hidden')); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); syncHistory(); }
+function closeAll() { closePanels(); if (S.selected) select(null); closeSearch(); }
+/* Bouton « retour » (Android, geste iPhone) et Échap : ferment la couche du dessus (mode télescope, panneau ou fiche) */
+var histSkip = false, histT = 0;
+function overlayOpen() { return !!(S.telmode || openPanelName() || S.selected); }
+function syncHistory() { clearTimeout(histT); histT = setTimeout(() => {
+  if (histSkip) return; const st = history.state && history.state.ov;
+  try { if (overlayOpen() && !st) history.pushState({ ov: 1 }, ''); else if (!overlayOpen() && st) { histSkip = true; history.back(); } } catch (e) {}
+}, 0); }
+function closeTop() {
+  if (S.telmode && window.CELESTE_TEL) { window.CELESTE_TEL.exitMode(true); return true; }
+  if (openPanelName()) { closePanels(); return true; }
+  if (S.selected) { select(null); return true; }
+  return false;
+}
+window.addEventListener('popstate', () => { if (histSkip) { histSkip = false; syncHistory(); return; } closeTop(); syncHistory(); });
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (window.CELESTE_TEL && window.CELESTE_TEL.escape()) { e.preventDefault(); return; }
+  if (e.target === si) return;
+  if (closeTop()) e.preventDefault();
+});
 document.querySelectorAll('.fab[data-panel]').forEach(b => b.onclick = () => openPanel(b.dataset.panel));
 $('locBtn').onclick = () => openPanel('location');
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => {
   const id = b.dataset.close;
-  if (id === 'infoCard') select(null); else { $(id).classList.add('hidden'); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); }
+  if (id === 'infoCard') select(null); else { $(id).classList.add('hidden'); document.querySelectorAll('.fab[data-panel]').forEach(f => f.classList.remove('on')); syncHistory(); }
 });
 document.querySelectorAll('[data-opt]').forEach(cb => {
   cb.checked = !!S.opts[cb.dataset.opt];
@@ -1439,7 +1466,7 @@ function renderMarathon() {
 
 /* ---------------- Pointeur laser ---------------- */
 const LASER = { target: null, score: 0, lostAt: 0, last: 0, lastHtml: 0, key: '', con: '' };
-const laserActive = () => !!S.opts.laser;
+const laserActive = () => !!S.opts.laser && !S.telmode;
 const laserRadiusDeg = () => AR.on ? clamp(AR.fov * 0.06, 3, 5) : clamp(V.fovDeg * 0.045, 1.5, 5); // ~4° en mode caméra
 const sameSel = (a, b) => !!a && !!b && a.kind === b.kind && (a.kind === 'star' ? a.i === b.i : a.kind === 'body' ? a.bi === b.bi : a.kind === 'sat' ? a.id === b.id : a.kind === 'xo' || a.kind === 'mes' ? a.i === b.i : a.c === b.c);
 function sepDeg(v) { return Math.acos(clamp(v[0] * V.fN + v[1] * V.fE + v[2] * V.fU, -1, 1)) * RAD; }
@@ -2552,7 +2579,7 @@ $('satCountry').onchange = e => {
   if (S.selected && S.selected.kind === 'sat' && !satPassesFilter(SAT.byId.get(S.selected.id))) select(null);
   if (!$('panel-sats').classList.contains('hidden')) renderPasses();
 };
-$('telOpenBtn').onclick = () => openPanel('telescope', true);
+$('telOpenBtn').onclick = () => { if (window.CELESTE_TEL) window.CELESTE_TEL.enterMode(); };
 $('mesMarBtn').onclick = () => { openPanel('messier', true); renderMarathon(); };
 $('satPassBtn').onclick = () => { openPanel('sats', true); satEnsureData(); startPassJob(); };
 /* ---------------- Pays / organisation propriétaire (CelesTrak SATCAT, champ OWNER) ---------------- */
@@ -2719,9 +2746,33 @@ function telTarget(s) {
   const [ra, dec] = s.kind === 'star' ? [SRA[s.i], SDEC[s.i]] : s.kind === 'mes' ? [MES[s.i].ra, MES[s.i].de] : s.kind === 'xo' ? [XO[s.i].ra, XO[s.i].de] : [s.c.ra, s.c.dec];
   return { name, kind: s.kind, ra, dec };
 }
+/* Mode télescope : recherche et « Visibles maintenant » */
+function telItem(it, sel) { const a = sel.kind === 'con' ? null : objAltAz(sel).alt; return { name: objName(sel), sub: it, alt: a, sel }; }
+function telSearch(q) {
+  q = fold(q); if (!q) return []; updateSky(true); const hits = [];
+  for (const it of INDEX) {
+    if (it.sel.kind === 'sat') continue; let sc = 1e9;
+    for (const k of it.keys) { if (k === q) sc = Math.min(sc, 0); else if (k.startsWith(q)) sc = Math.min(sc, 1); else if (k.includes(' ' + q)) sc = Math.min(sc, 2); else if (q.length > 2 && k.includes(q)) sc = Math.min(sc, 3); }
+    if (sc < 1e9) hits.push([sc * 10 + it.rank, it]);
+  }
+  hits.sort((a, b) => a[0] - b[0]);
+  return hits.slice(0, 8).map(h => telItem(h[1].sub.replace(/ · catalogue de Messier| · objet extrême/, ''), { ...h[1].sel }));
+}
+function telSuggest() {
+  updateSky(true); const out = [];
+  sky.bodies.forEach((b, bi) => { if (b.b.key === 'Sun' || b.b.key === 'Earth' || b.alt < 5) return; if (b.b.key !== 'Moon' && b.mag > 8) return; out.push({ r: b.b.key === 'Moon' ? -30 : b.mag - 10, it: telItem(b.b.type, { kind: 'body', bi }) }); });
+  const st = [];
+  for (let i = 0; i < NS; i++) { if (SMAG[i] > 1.6) continue; const n = D.names[SHIP[i]]; if (!n || !n[0]) continue; const a = starAltAz(i).alt; if (a < 15) continue; st.push({ r: SMAG[i], it: { name: starName(i), sub: 'Étoile · mag ' + num(SMAG[i], 1), alt: a, sel: { kind: 'star', i } } }); }
+  st.sort((a, b) => a.r - b.r); out.push(...st.slice(0, 6));
+  const ms = [];
+  MES.forEach((o, i) => { const a = neuToAltAz(mesNEU(i)).alt; if (a < 20) return; ms.push({ r: o.mag, it: { name: mesTitle(o), sub: o.tf + ' · mag ' + num(o.mag, 1), alt: a, sel: { kind: 'mes', i } } }); });
+  ms.sort((a, b) => a.r - b.r); out.push(...ms.slice(0, 5).map(x => ({ r: 50 + x.r, it: x.it })));
+  out.sort((a, b) => a.r - b.r); return out.map(x => x.it);
+}
 function projEqj(v) { const n = eqjToNEU(v[0], v[1], v[2], [0, 0, 0]); return proj(n[0], n[1], n[2]) ? { x: P.x, y: P.y } : null; }
 window.__celeste = {
-  telTarget, toast, dirty() { S.dirty = true; }, refreshInfo() { if (S.selected) renderInfo(); }, projEqj,
+  telTarget, toast, dirty() { S.dirty = true; }, refreshInfo() { if (S.selected) renderInfo(); }, projEqj, telSearch, telSuggest, closeAll, setLive,
+  overlayOpened() { syncHistory(); }, overlayClosed() { syncHistory(); }, openPanelName,
   S, sky, AR, select, centerOn, setLocation, openPanel, loadForecast, forecastState, BODIES,
   setTime(ms) { S.live = false; S.playing = false; S.anchor = ms; S.slider = 0; slider.value = 0; syncTimeUI(); S.dirty = true; updateSky(true); },
   bodyAltAz() { updateSky(true); return sky.bodies.map(b => ({ key: b.b.key, alt: b.alt, az: b.az, mag: b.mag })); },
